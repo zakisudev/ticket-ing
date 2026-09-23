@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 describe('BoardPage', () => {
-  it('renders all six columns with project tickets in the right places', async () => {
+  it('renders exactly the five lifecycle columns with tickets in the right places', async () => {
     installFetchRouter([
       { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
       { method: 'GET', prefix: '/api/projects/proj-1/tickets/board', respond: () => jsonResponse(boardState) },
@@ -57,11 +57,112 @@ describe('BoardPage', () => {
       expect(screen.getByTestId('ticket-card-TMR-001')).toBeInTheDocument();
     });
     expect(screen.getByTestId('ticket-card-TMR-002')).toBeInTheDocument();
-    for (const status of ['PLANNED', 'IN_PROGRESS', 'IMPLEMENTED', 'TESTED', 'DEPLOYED', 'BLOCKED']) {
+    for (const status of ['PLANNED', 'IN_PROGRESS', 'IMPLEMENTED', 'TESTED', 'DEPLOYED']) {
       expect(screen.getByTestId(`board-column-${status}`)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId('board-column-BLOCKED')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-column-PLANNED')).toContainElement(screen.getByTestId('ticket-card-TMR-001'));
     expect(screen.getByTestId('board-column-IN_PROGRESS')).toContainElement(screen.getByTestId('ticket-card-TMR-002'));
+  });
+
+  it('shows the BLOCKED badge on a blocked card that stays in its lifecycle column', async () => {
+    installFetchRouter([
+      { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
+      {
+        method: 'GET',
+        prefix: '/api/projects/proj-1/tickets/board',
+        respond: () =>
+          jsonResponse(
+            mockBoard([
+              mockTicket({
+                id: 'tkt-2',
+                displayId: 'TMR-002',
+                title: 'Working item',
+                status: 'IN_PROGRESS',
+                isBlocked: true,
+                blockedReason: 'waiting on OPS3B',
+              }),
+            ])
+          ),
+      },
+      { method: 'GET', prefix: '/api/projects', respond: () => jsonResponse({ projects: [mockProject()] }) },
+    ]);
+
+    renderBoard();
+    await waitFor(() => expect(screen.getByTestId('ticket-card-TMR-002')).toBeInTheDocument());
+    expect(screen.getByTestId('blocked-badge')).toHaveTextContent('BLOCKED');
+    // The blocked card remains in its lifecycle column.
+    expect(screen.getByTestId('board-column-IN_PROGRESS')).toContainElement(
+      screen.getByTestId('ticket-card-TMR-002')
+    );
+  });
+
+  it('blocked-only filter hides non-blocked cards via the URL param', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    installFetchRouter([
+      { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
+      {
+        method: 'GET',
+        prefix: '/api/projects/proj-1/tickets/board',
+        respond: () =>
+          jsonResponse(
+            mockBoard([
+              mockTicket({ id: 'tkt-1', displayId: 'TMR-001', title: 'Normal', status: 'PLANNED' }),
+              mockTicket({
+                id: 'tkt-2',
+                displayId: 'TMR-002',
+                title: 'Stuck',
+                status: 'PLANNED',
+                isBlocked: true,
+                blockedReason: 'waiting',
+              }),
+            ])
+          ),
+      },
+      { method: 'GET', prefix: '/api/projects', respond: () => jsonResponse({ projects: [mockProject()] }) },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/p/temarione/board?blocked=true']}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/p/:slug/board" element={<BoardPage />} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ticket-card-TMR-002')).toBeInTheDocument());
+    expect(screen.queryByTestId('ticket-card-TMR-001')).not.toBeInTheDocument();
+    expect(screen.getByTestId('blocked-filter')).toBeChecked();
+  });
+
+  it('shows the LIMITATIONS badge for tickets with limitations', async () => {
+    installFetchRouter([
+      { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
+      {
+        method: 'GET',
+        prefix: '/api/projects/proj-1/tickets/board',
+        respond: () =>
+          jsonResponse(
+            mockBoard([
+              mockTicket({
+                id: 'tkt-1',
+                displayId: 'TMR-001',
+                title: 'Shipped with caveats',
+                status: 'DEPLOYED',
+                limitations: 'mailbox rendering unverified',
+              }),
+            ])
+          ),
+      },
+      { method: 'GET', prefix: '/api/projects', respond: () => jsonResponse({ projects: [mockProject()] }) },
+    ]);
+
+    renderBoard();
+    await waitFor(() => expect(screen.getByTestId('limitations-badge')).toBeInTheDocument());
   });
 
   it('quick-creates a ticket with defaults via the API', async () => {

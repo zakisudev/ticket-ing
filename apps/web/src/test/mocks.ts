@@ -1,5 +1,15 @@
 import { vi } from 'vitest';
-import type { BoardDto, ProjectDto, TicketDetailDto, TicketDto, UserDto } from '@zakisu-tickets/shared';
+import type {
+  BoardDto,
+  ChecklistItemDto,
+  ProjectDto,
+  TagDto,
+  TicketDetailDto,
+  TicketDto,
+  TicketLinkDto,
+  TicketRelationDto,
+  UserDto,
+} from '@zakisu-tickets/shared';
 
 export function jsonResponse(data: unknown, status = 200): Response {
   return {
@@ -53,6 +63,8 @@ export function mockTicket(overrides: Partial<TicketDto> = {}): TicketDto {
     status: 'PLANNED',
     priority: 'P2',
     type: 'FEATURE',
+    isBlocked: false,
+    blockedReason: null,
     summary: null,
     description: null,
     motivation: null,
@@ -63,7 +75,6 @@ export function mockTicket(overrides: Partial<TicketDto> = {}): TicketDto {
     limitations: null,
     knownIssues: null,
     followUpNotes: null,
-    blockedReason: null,
     sourceReference: null,
     archivedAt: null,
     startedAt: null,
@@ -77,7 +88,7 @@ export function mockTicket(overrides: Partial<TicketDto> = {}): TicketDto {
 }
 
 export function mockBoard(tickets: TicketDto[]): { board: BoardDto } {
-  const statuses = ['PLANNED', 'IN_PROGRESS', 'IMPLEMENTED', 'TESTED', 'DEPLOYED', 'BLOCKED'] as const;
+  const statuses = ['PLANNED', 'IN_PROGRESS', 'IMPLEMENTED', 'TESTED', 'DEPLOYED'] as const;
   return {
     board: {
       projectId: 'proj-1',
@@ -104,6 +115,10 @@ export function mockDetail(ticket: TicketDto): { ticket: TicketDetailDto } {
           seq: 1,
         },
       ],
+      checklist: [] as ChecklistItemDto[],
+      links: [] as TicketLinkDto[],
+      relations: [] as TicketRelationDto[],
+      tags: [] as TagDto[],
     },
   };
 }

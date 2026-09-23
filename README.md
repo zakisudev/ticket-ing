@@ -9,10 +9,18 @@ implemented, tested, deployed — and what was deliberately postponed?*
 
 ## Core ideas
 
-- **Workflow discipline**: `PLANNED → IN_PROGRESS → IMPLEMENTED → TESTED → DEPLOYED`.
-  IMPLEMENTED means source-complete; TESTED means verification passed; DEPLOYED
-  means released. They are never conflated. BLOCKED (with a required reason) and
-  ARCHIVED are exceptional states.
+- **Workflow discipline (product invariant)**: `status` is the lifecycle —
+  `PLANNED → IN_PROGRESS → IMPLEMENTED → TESTED → DEPLOYED` — and answers *how far
+  has this work progressed?* IMPLEMENTED means source-complete; TESTED means
+  verification passed; DEPLOYED means released. They are never conflated.
+- **Blocked is a condition, not a state (product invariant)**: `isBlocked` +
+  `blockedReason` answer *can work currently continue?* — orthogonal to status.
+  A ticket can be `IMPLEMENTED` and blocked; its card stays in the IMPLEMENTED
+  column with a BLOCKED badge. Blocking requires a non-empty reason; unblocking
+  clears the live reason but preserves it in `UNBLOCKED` activity.
+- **Archive is a condition, not a state (product invariant)**: `archivedAt != null`
+  hides a ticket from the board by default (`archived=only` shows the archive
+  view) and never touches lifecycle status or milestones.
 - **Milestone timestamps are set once** (first entry into a state) and never erased
   by moving backward. Every transition is recorded in the activity history.
 - **Limitations are first-class**: implemented work usually has caveats; they get
@@ -38,13 +46,23 @@ deliberately cPanel/"Setup Node.js App" friendly.
 ### Database (MySQL 8 / MariaDB-compatible)
 
 `users`, `sessions`, `projects`, `project_ticket_counters`, `tickets`,
-`ticket_activities`, plus Phase-2-ready `ticket_checklist_items`, `ticket_links`,
-`ticket_relations` (canonical rows only — inverses derived, never stored), `tags`,
-`ticket_tags`. All IDs are CHAR(36); display IDs (`TMR-042`) are derived from the
+`ticket_activities`, `ticket_checklist_items`, `ticket_links`,
+`ticket_relations`, `tags` (project-scoped, unique `slug`), `ticket_tags`.
+All IDs are CHAR(36); display IDs (`TMR-042`) are derived from the
 current project key. Ticket numbering uses
 `UPDATE ... SET last_number = LAST_INSERT_ID(last_number + 1)` — concurrency-safe
 without `MAX()+1`. A nullable `tickets.import_key` (unique per project) is reserved
 for the Phase 4 historical import; nothing populates it yet.
+
+**Relations are canonical**: exactly one row per relationship is stored
+(`A BLOCKS B`); the inverse presentation (`B blocked by A`) is derived at read
+time and never persisted. `RELATED_TO` is symmetric — whichever direction is
+created first becomes the canonical row. `BLOCKED_BY` as a stored type does not
+exist. Relations stay within one project for V1.
+
+**Markdown** in long fields is rendered with `react-markdown` + `remark-gfm` and
+sanitized with `rehype-sanitize` — raw HTML, event handlers, and
+`javascript:`/`data:` URLs are stripped before anything reaches the DOM.
 
 ## Local setup
 
