@@ -6,7 +6,6 @@ import {
   type BoardDto,
   type CreateTicketInput,
   type TicketActivityDto,
-  type TicketDetailDto,
   type TicketDto,
   type TicketFilterParams,
   type TicketListDto,
@@ -391,7 +390,10 @@ export async function updateTicket(
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
-export async function getTicketDetail(ticketId: string, ownerId: string): Promise<TicketDetailDto> {
+export async function getTicketDetailBase(
+  ticketId: string,
+  ownerId: string
+): Promise<TicketDto & { activity: TicketActivityDto[] }> {
   const { ticket, projectKey } = await getOwnedTicketContextOr404(ticketId, ownerId);
   const db = getDb();
   const activityRows = await db
@@ -407,7 +409,7 @@ export async function getTicketDetail(ticketId: string, ownerId: string): Promis
     createdAt: dbDatetimeToIso(a.createdAt) ?? new Date(0).toISOString(),
     seq: a.seq,
   }));
-  return { ...toDto(ticket, projectKey), activity, checklist: [], links: [], relations: [], tags: [] };
+  return { ...toDto(ticket, projectKey), activity };
 }
 
 // ---------------------------------------------------------------------------

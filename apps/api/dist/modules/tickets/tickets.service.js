@@ -321,7 +321,7 @@ export async function updateTicket(ticketId, ownerId, input) {
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
-export async function getTicketDetail(ticketId, ownerId) {
+export async function getTicketDetailBase(ticketId, ownerId) {
     const { ticket, projectKey } = await getOwnedTicketContextOr404(ticketId, ownerId);
     const db = getDb();
     const activityRows = await db
@@ -337,7 +337,7 @@ export async function getTicketDetail(ticketId, ownerId) {
         createdAt: dbDatetimeToIso(a.createdAt) ?? new Date(0).toISOString(),
         seq: a.seq,
     }));
-    return { ...toDto(ticket, projectKey), activity, checklist: [], links: [], relations: [], tags: [] };
+    return { ...toDto(ticket, projectKey), activity };
 }
 // ---------------------------------------------------------------------------
 // Search + filters + list sorting (project-scoped, owner-enforced).

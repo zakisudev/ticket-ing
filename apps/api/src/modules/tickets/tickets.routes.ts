@@ -10,6 +10,7 @@ import {
   updateTicketSchema,
   ticketFilterParamsSchema,
   listSortFieldsSchema,
+  type TicketDetailDto,
 } from '@zakisu-tickets/shared';
 import { z } from 'zod';
 import { ApiError } from '../../lib/errors.js';
@@ -17,7 +18,7 @@ import { requireAuth } from '../auth/sessions.js';
 import {
   createTicket,
   getBoard,
-  getTicketDetail,
+  getTicketDetailBase,
   getTicketByNumber,
   setTicketArchived,
   updateTicket,
@@ -189,7 +190,18 @@ projectTicketsRouter.delete('/:projectId/tags/:tagId', async (req, res, next) =>
 // ------------------------------------------------------- ticket endpoints
 ticketsRouter.get('/:ticketId', async (req, res, next) => {
   try {
-    const ticket = await getTicketDetail(requireTicketId(req), req.user!.id);
+    const ticketId = requireTicketId(req);
+    const ownerId = req.user!.id;
+    // Authorize first, then reuse the existing subresource readers so their
+    // ordering, ownership, and relation-perspective rules stay authoritative.
+    const base = await getTicketDetailBase(ticketId, ownerId);
+    const [checklist, links, relations, tags] = await Promise.all([
+      listChecklist(ticketId, ownerId),
+      listLinks(ticketId, ownerId),
+      listRelations(ticketId, ownerId),
+      listTicketTags(ticketId, ownerId),
+    ]);
+    const ticket: TicketDetailDto = { ...base, checklist, links, relations, tags };
     res.json({ ticket });
   } catch (err) {
     next(err);
