@@ -5,6 +5,7 @@ import { RegisterPage } from './features/auth/RegisterPage';
 import { RequireAuth } from './features/auth/RequireAuth';
 import { ProjectsPage } from './features/projects/ProjectsPage';
 import { BoardPage } from './features/tickets/BoardPage';
+import { ListPage } from './features/tickets/ListPage';
 import { TicketDetailPage } from './features/tickets/TicketDetailPage';
 import { HomePage } from './features/projects/HomePage';
 
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/p/:slug/board" element={<BoardPage />} />
+        <Route path="/p/:slug/list" element={<ListPage />} />
         <Route path="/p/:slug/tickets/:ticketId" element={<TicketDetailPage />} />
       </Route>
 
