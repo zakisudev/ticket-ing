@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import argon2 from 'argon2';
 import type { RowDataPacket } from 'mysql2/promise';
 import { eq } from 'drizzle-orm';
 import {
@@ -17,16 +16,9 @@ import { ApiError } from '../../lib/errors.js';
 import { getConfig } from '../../config.js';
 import { getLogger } from '../../lib/logger.js';
 import { createSession, clearSessionCookie, requireAuth, toUserDto } from './sessions.js';
+import { hashPassword, verifyPassword } from './passwords.js';
 
 export const authRouter = Router();
-
-// Argon2id per approved baseline: ~19 MiB memory, 3 passes.
-export const ARGON2_PARAMS = {
-  memoryCost: 19_456,
-  timeCost: 3,
-  parallelism: 1,
-} as const;
-const ARGON2_OPTS = { type: argon2.argon2id, ...ARGON2_PARAMS };
 
 // ---------------------------------------------------------------------------
 // Login rate limiting: per-IP+email failure counters, in-memory (single process).
@@ -82,10 +74,7 @@ function logAuth(category: string): void {
 }
 
 /** Precomputed hash so unknown-email logins burn comparable CPU (timing equalization). */
-const DUMMY_HASH_PROMISE = argon2.hash('zakisu-tickets-dummy-verify', {
-  type: argon2.argon2id,
-  ...ARGON2_PARAMS,
-});
+const DUMMY_HASH_PROMISE = hashPassword('zakisu-tickets-dummy-verify');
 
 // ---------------------------------------------------------------------------
 // Login — generic failure message always; per-IP+email rate limiting.
@@ -107,8 +96,8 @@ authRouter.post('/login', async (req, res, next) => {
     // Uniform failure path: same message/timing whether email or password is wrong.
     const dummyHash = await DUMMY_HASH_PROMISE;
     const passwordOk = user
-      ? await argon2.verify(user.passwordHash, password)
-      : await argon2.verify(dummyHash, password).catch(() => false);
+      ? await verifyPassword(user.passwordHash, password)
+      : await verifyPassword(dummyHash, password);
     if (!user || !passwordOk) {
       recordLoginFailure(req, email);
       logAuth('auth.login.failure');
@@ -129,7 +118,9 @@ authRouter.post('/logout', async (req, res, next) => {
   try {
     const token = req.cookies?.[SESSION_COOKIE_NAME] as string | undefined;
     if (token) {
-      await getDb().delete(sessions).where(eq(sessions.tokenHash, sha256Hex(token)));
+      await getDb()
+        .delete(sessions)
+        .where(eq(sessions.tokenHash, sha256Hex(token)));
     }
     clearSessionCookie(res);
     res.json({ ok: true });
@@ -159,18 +150,15 @@ authRouter.post('/change-password', requireAuth, async (req, res, next) => {
     const user = rows[0];
     if (!user) throw ApiError.unauthenticated();
 
-    const ok = await argon2.verify(user.passwordHash, currentPassword);
+    const ok = await verifyPassword(user.passwordHash, currentPassword);
     if (!ok) {
       logAuth('auth.change_password.failure');
       throw ApiError.unauthenticated('Current password is incorrect');
     }
 
-    const passwordHash = await argon2.hash(newPassword, ARGON2_OPTS);
+    const passwordHash = await hashPassword(newPassword);
     await db.transaction(async (tx) => {
-      await tx
-        .update(users)
-        .set({ passwordHash })
-        .where(eq(users.id, user.id));
+      await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id));
       // Rotate: invalidate every existing session, then mint one for this browser.
       await tx.delete(sessions).where(eq(sessions.userId, user.id));
     });
@@ -216,25 +204,25 @@ authRouter.post('/register', async (req, res, next) => {
       await conn.beginTransaction();
       const [lockRows] = await conn.query<RowDataPacket[]>(
         'SELECT GET_LOCK(?, 5) AS lockAcquired',
-        [REGISTRATION_LOCK]
+        [REGISTRATION_LOCK],
       );
       if (Number((lockRows[0] as { lockAcquired: number }).lockAcquired) !== 1) {
         throw ApiError.conflict('Registration is busy; retry momentarily');
       }
 
-      const [countRows] = await conn.query<RowDataPacket[]>(
-        'SELECT COUNT(*) AS count FROM users'
-      );
+      const [countRows] = await conn.query<RowDataPacket[]>('SELECT COUNT(*) AS count FROM users');
       if (Number((countRows[0] as { count: number }).count) > 0) {
         throw ApiError.conflict('Registration is closed');
       }
 
-      const passwordHash = await argon2.hash(password, ARGON2_OPTS);
+      const passwordHash = await hashPassword(password);
       userId = newId();
-      await conn.execute(
-        'INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)',
-        [userId, email, passwordHash, name ?? null]
-      );
+      await conn.execute('INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)', [
+        userId,
+        email,
+        passwordHash,
+        name ?? null,
+      ]);
 
       await conn.query('SELECT RELEASE_LOCK(?)', [REGISTRATION_LOCK]);
       await conn.commit();
@@ -249,7 +237,9 @@ authRouter.post('/register', async (req, res, next) => {
     // The first owner is authenticated immediately after registration.
     await createSession(userId, res);
     logAuth('auth.register.success');
-    res.status(201).json({ user: toUserDto({ id: userId, email, name: name ?? null, createdAt: new Date() }) });
+    res
+      .status(201)
+      .json({ user: toUserDto({ id: userId, email, name: name ?? null, createdAt: new Date() }) });
   } catch (err) {
     next(err);
   }

@@ -20,28 +20,25 @@ import { getOwnedTicketContextOr404, insertActivity } from './tickets.service.js
  */
 export async function listRelations(
   ticketId: string,
-  ownerId: string
+  ownerId: string,
 ): Promise<TicketRelationDto[]> {
   const { projectKey } = await getOwnedTicketContextOr404(ticketId, ownerId);
   const db = getDb();
+  // Match either endpoint so the stored relation can be presented in both directions.
+  const relationEndpoint = or(
+    eq(ticketRelations.relatedTicketId, tickets.id),
+    eq(ticketRelations.ticketId, tickets.id),
+  );
   const rows = await db
     .select({ relation: ticketRelations, other: tickets })
     .from(ticketRelations)
-    .innerJoin(
-      tickets,
-      or(
-        // Forward direction: this ticket is the stored "from".
-        eq(ticketRelations.relatedTicketId, tickets.id),
-        // Inverse direction: this ticket is the stored "to".
-        eq(ticketRelations.ticketId, tickets.id)
-      )
-    )
+    .innerJoin(tickets, relationEndpoint)
     .innerJoin(projects, eq(projects.id, tickets.projectId))
     .where(
       and(
         eq(projects.ownerId, ownerId),
-        or(eq(ticketRelations.ticketId, ticketId), eq(ticketRelations.relatedTicketId, ticketId))
-      )
+        or(eq(ticketRelations.ticketId, ticketId), eq(ticketRelations.relatedTicketId, ticketId)),
+      ),
     );
 
   return rows
@@ -76,7 +73,7 @@ export async function listRelations(
 export async function addRelation(
   ticketId: string,
   ownerId: string,
-  input: CreateRelationInput
+  input: CreateRelationInput,
 ): Promise<TicketRelationDto[]> {
   const self = await getOwnedTicketContextOr404(ticketId, ownerId);
   if (input.otherTicketId === ticketId) {
@@ -93,7 +90,11 @@ export async function addRelation(
   const symmetric = input.type === 'RELATED_TO';
   const canonical = (() => {
     if (!symmetric) {
-      return { from: ticketId, to: input.otherTicketId, type: input.type as 'BLOCKS' | 'FOLLOWS_UP' };
+      return {
+        from: ticketId,
+        to: input.otherTicketId,
+        type: input.type as 'BLOCKS' | 'FOLLOWS_UP',
+      };
     }
     return ticketId < input.otherTicketId
       ? { from: ticketId, to: input.otherTicketId, type: 'RELATED_TO' as const }
@@ -107,14 +108,19 @@ export async function addRelation(
     .from(ticketRelations)
     .where(
       or(
-        and(eq(ticketRelations.ticketId, canonical.from), eq(ticketRelations.relatedTicketId, canonical.to)),
-        and(eq(ticketRelations.ticketId, canonical.to), eq(ticketRelations.relatedTicketId, canonical.from))
-      )
+        and(
+          eq(ticketRelations.ticketId, canonical.from),
+          eq(ticketRelations.relatedTicketId, canonical.to),
+        ),
+        and(
+          eq(ticketRelations.ticketId, canonical.to),
+          eq(ticketRelations.relatedTicketId, canonical.from),
+        ),
+      ),
     );
   const conflict = existingRows.find(
     (r) =>
-      r.type === canonical.type ||
-      (canonical.type === 'RELATED_TO' && r.type === 'RELATED_TO')
+      r.type === canonical.type || (canonical.type === 'RELATED_TO' && r.type === 'RELATED_TO'),
   );
   if (conflict) {
     throw ApiError.conflict('This relation already exists');
@@ -126,7 +132,7 @@ export async function addRelation(
     await conn.beginTransaction();
     await conn.execute(
       `INSERT INTO ticket_relations (id, ticket_id, related_ticket_id, type) VALUES (?, ?, ?, ?)`,
-      [newId(), canonical.from, canonical.to, canonical.type]
+      [newId(), canonical.from, canonical.to, canonical.type],
     );
     // Activity on BOTH tickets; metadata carries ids/types only.
     await insertActivity(conn, ticketId, ownerId, [
@@ -156,7 +162,7 @@ export async function addRelation(
 export async function deleteRelation(
   ticketId: string,
   relationId: string,
-  ownerId: string
+  ownerId: string,
 ): Promise<void> {
   await getOwnedTicketContextOr404(ticketId, ownerId);
   const db = getDb();
@@ -167,10 +173,7 @@ export async function deleteRelation(
     .limit(1);
   const row = rows[0];
   // 404 when the relation does not involve an owned ticket — never disclose.
-  if (
-    !row ||
-    (row.ticketId !== ticketId && row.relatedTicketId !== ticketId)
-  ) {
+  if (!row || (row.ticketId !== ticketId && row.relatedTicketId !== ticketId)) {
     throw ApiError.notFound('Relation not found');
   }
   // Both endpoints must be owned by the same owner.

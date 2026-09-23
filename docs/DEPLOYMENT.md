@@ -25,7 +25,7 @@ repository root or from `apps/api`:
 
 ```ini
 NODE_ENV=production
-PORT=<port assigned by cPanel, or 4000>
+# Omit PORT under cPanel/Passenger; it injects PORT or DSP_PORT.
 DATABASE_URL=mysql://tickets_user:STRONG_PASSWORD@127.0.0.1:3306/zakisu_tickets
 APP_URL=https://tickets.zakisu.com
 CORS_ORIGIN=https://tickets.zakisu.com
@@ -39,18 +39,26 @@ Notes:
 - `Secure` cookies and `upgrade-insecure-requests` CSP turn on automatically when
   `NODE_ENV=production`.
 
-## 3. Install, build, migrate
+## 3. Install and migrate
+
+Production build artifacts are committed to the repository. The cPanel host only
+needs runtime dependencies; TypeScript, Vite, Python, and a native compiler are
+not required.
 
 ```bash
-npm ci
-npm run build          # shared → api → web (web output: apps/web/dist)
-npm run db:migrate     # applies pending migrations; safe to re-run
+nvm use 22
+npm ci --omit=dev
+npm run db:migrate:prod   # applies pending migrations; safe to re-run
 ```
+
+The API uses a bundled WebAssembly Argon2id implementation, so password hashing
+does not compile a native Node addon during installation. Existing standard
+Argon2id password hashes remain compatible.
 
 ## 4. Start (cPanel "Setup Node.js App")
 
 - Application root: the repository root
-- Application startup file: `apps/api/dist/index.js`
+- Application startup file: `app.js`
 - Click **Start** (or `npm run start:api` from the shell for systemd setups)
 
 Restart after a deploy via cPanel's **Restart** button, or:
@@ -66,26 +74,43 @@ curl -s https://tickets.zakisu.com/health          # {"ok":true,...}
 curl -s https://tickets.zakisu.com/health/ready    # {"ok":true,"database":"up"}
 ```
 
-Then open the site, confirm `/register` is **closed** (owner exists), and sign in.
+For a new empty database, open `/register` immediately and create the first owner.
+Registration closes automatically after that account exists; then sign out and
+back in once to verify the complete authentication flow.
 
 ## 6. Release checklist (every deploy)
 
-1. `npm ci && npm run build`
-2. `npm run db:migrate`
-3. Restart the application
-4. `curl /health/ready` → database up
-5. Spot-check: sign in, open a board, drag a ticket, confirm activity recorded
+1. Pull a commit containing verified production artifacts
+2. `npm ci --omit=dev`
+3. `npm run db:migrate:prod`
+4. Restart the application
+5. `curl /health/ready` → database up
+6. Spot-check: sign in, open a board, drag a ticket, confirm activity recorded
 
-## 7. Backups
+## 7. Producing a release locally
+
+Run these commands on a development machine before committing a release:
+
+```bash
+npm ci --include=dev
+npm test
+npm run build
+git add apps/api/dist apps/web/dist packages/shared/dist
+```
+
+The API build cleans its output first and excludes test files. Vite replaces the
+web output on every build, including content-hashed asset filenames.
+
+## 8. Backups
 
 - Database: nightly `mysqldump zakisu_tickets | gzip > backup-$(date +%F).sql.gz`
 - JSON export/import per project arrives in Phase 4.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-| Symptom | Check |
-|---|---|
-| `/health/ready` 503 | `DATABASE_URL` reachable from the app user; DB running |
-| 502/503 on the domain | cPanel app crashed → check stderr log; `npm run build` output exists |
-| Cookies not sticking | `APP_URL`/`CORS_ORIGIN` mismatch; missing HTTPS (Secure cookies) |
-| 403 on mutations | Browser origin ≠ `CORS_ORIGIN` (Origin validation is strict) |
+| Symptom               | Check                                                            |
+| --------------------- | ---------------------------------------------------------------- |
+| `/health/ready` 503   | `DATABASE_URL` reachable from the app user; DB running           |
+| 502/503 on the domain | cPanel app crashed → check stderr log and committed `dist` files |
+| Cookies not sticking  | `APP_URL`/`CORS_ORIGIN` mismatch; missing HTTPS (Secure cookies) |
+| 403 on mutations      | Browser origin ≠ `CORS_ORIGIN` (Origin validation is strict)     |

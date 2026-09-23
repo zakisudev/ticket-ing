@@ -1,4 +1,3 @@
-import argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import type { Express } from 'express';
@@ -6,7 +5,7 @@ import { getPool } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
 import { newId, sha256Hex } from '../lib/ids.js';
 import { toMysqlDatetime } from '../lib/dates.js';
-import { ARGON2_PARAMS } from '../modules/auth/auth.routes.js';
+import { hashPassword } from '../modules/auth/passwords.js';
 
 let migrated: Promise<void> | null = null;
 
@@ -50,7 +49,7 @@ export interface TestOwner {
 export async function registerOwner(
   app: Express,
   email = 'owner@zakisu.test',
-  password = 'owner-password-1'
+  password = 'owner-password-1',
 ): Promise<TestOwner> {
   const res = await request(app).post('/api/auth/register').send({ email, password });
   if (res.status !== 201) {
@@ -61,9 +60,7 @@ export async function registerOwner(
 
 /** A request factory bound to a session cookie. */
 export function authed(app: Express, cookie: string | string[]) {
-  const flat = (Array.isArray(cookie) ? cookie : [cookie])
-    .map((c) => c.split(';')[0])
-    .join('; ');
+  const flat = (Array.isArray(cookie) ? cookie : [cookie]).map((c) => c.split(';')[0]).join('; ');
   return {
     get: (url: string) => request(app).get(url).set('Cookie', flat),
     post: (url: string) => request(app).post(url).set('Cookie', flat),
@@ -74,7 +71,7 @@ export function authed(app: Express, cookie: string | string[]) {
 
 export function agentFromResponse(
   app: Express,
-  setCookieHeader: string | string[]
+  setCookieHeader: string | string[],
 ): ReturnType<typeof authed> {
   return authed(app, setCookieHeader);
 }
@@ -86,11 +83,11 @@ export { request };
  * owner) to prove foreign resources are 404 and not merely unauthorized.
  */
 export async function createForeignOwner(
-  email = 'foreigner@zakisu.test'
+  email = 'foreigner@zakisu.test',
 ): Promise<{ id: string; cookie: string }> {
   const pool = getPool();
   const id = newId();
-  const hash = await argon2.hash('foreigner-password-1', { type: argon2.argon2id, ...ARGON2_PARAMS });
+  const hash = await hashPassword('foreigner-password-1');
   await pool.execute('INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)', [
     id,
     email,
@@ -99,7 +96,7 @@ export async function createForeignOwner(
   const token = `foreign-token-${randomUUID()}`;
   await pool.execute(
     'INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)',
-    [newId(), id, sha256Hex(token), toMysqlDatetime(new Date(Date.now() + 86400_000))]
+    [newId(), id, sha256Hex(token), toMysqlDatetime(new Date(Date.now() + 86400_000))],
   );
   return { id, cookie: `zt_session=${token}` };
 }

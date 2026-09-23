@@ -1,5 +1,11 @@
 node_modules/
 dist/
+!apps/api/dist/
+!apps/api/dist/**
+!apps/web/dist/
+!apps/web/dist/**
+!packages/shared/dist/
+!packages/shared/dist/**
 coverage/
 *.log
 .DS_Store
