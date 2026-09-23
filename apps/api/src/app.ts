@@ -9,7 +9,9 @@ import { getLogger } from './lib/logger.js';
 import { buildSecurityMiddleware } from './middleware/security.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { requireAuth } from './modules/auth/sessions.js';
 import { projectsRouter } from './modules/projects/projects.routes.js';
+import { globalFocusHandler } from './modules/tickets/insights.routes.js';
 import { projectTicketsRouter, ticketsRouter } from './modules/tickets/tickets.routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +52,7 @@ export function createApp(): Express {
   app.use('/api/projects', projectsRouter);
   app.use('/api/projects', projectTicketsRouter);
   app.use('/api/tickets', ticketsRouter);
+  app.get('/api/focus', requireAuth, globalFocusHandler);
 
   app.use('/api', notFoundHandler);
 

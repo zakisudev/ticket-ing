@@ -4,10 +4,19 @@ import { Archive, ArchiveRestore, FolderKanban, Plus } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { createProjectSchema } from '@zakisu-tickets/shared';
+import type { ProjectDto } from '@zakisu-tickets/shared';
 import type { z } from 'zod';
 import { useArchiveProject, useCreateProject, useProjects } from '@/api/hooks';
 import { ApiClientError } from '@/api/client';
-import { Button, Dialog, EmptyState, Input, Spinner, Textarea } from '@/components/ui';
+import {
+  Button,
+  ConfirmDialog,
+  Dialog,
+  EmptyState,
+  Input,
+  Spinner,
+  Textarea,
+} from '@/components/ui';
 
 type FormValues = z.infer<typeof createProjectSchema>;
 
@@ -33,7 +42,9 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
       if (err instanceof ApiClientError && err.code === 'VALIDATION_ERROR') {
         setError('root', { message: 'Check the highlighted fields.' });
       } else {
-        setError('root', { message: err instanceof Error ? err.message : 'Failed to create project' });
+        setError('root', {
+          message: err instanceof Error ? err.message : 'Failed to create project',
+        });
       }
     }
   });
@@ -42,25 +53,52 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
     <Dialog open={open} onClose={onClose} title="Create project">
       <form onSubmit={onSubmit} className="space-y-3" noValidate>
         <div>
-          <label htmlFor="proj-name" className="mb-1 block text-xs text-text-muted">Name</label>
-          <Input id="proj-name" placeholder="TemariOne" data-testid="project-name" {...register('name')} />
+          <label htmlFor="proj-name" className="mb-1 block text-xs text-text-muted">
+            Name
+          </label>
+          <Input
+            id="proj-name"
+            placeholder="TemariOne"
+            data-testid="project-name"
+            {...register('name')}
+          />
           {errors.name ? <p className="mt-1 text-xs text-danger">{errors.name.message}</p> : null}
         </div>
         <div>
           <label htmlFor="proj-key" className="mb-1 block text-xs text-text-muted">
             Key (uppercase, 2–10 chars — used for ticket IDs like TMR-001)
           </label>
-          <Input id="proj-key" placeholder="TMR" className="uppercase" data-testid="project-key" {...register('projectKey')} />
-          {errors.projectKey ? <p className="mt-1 text-xs text-danger">{errors.projectKey.message}</p> : null}
+          <Input
+            id="proj-key"
+            placeholder="TMR"
+            className="uppercase"
+            data-testid="project-key"
+            {...register('projectKey')}
+          />
+          {errors.projectKey ? (
+            <p className="mt-1 text-xs text-danger">{errors.projectKey.message}</p>
+          ) : null}
         </div>
         <div>
-          <label htmlFor="proj-desc" className="mb-1 block text-xs text-text-muted">Description (optional)</label>
+          <label htmlFor="proj-desc" className="mb-1 block text-xs text-text-muted">
+            Description (optional)
+          </label>
           <Textarea id="proj-desc" rows={2} {...register('description')} />
         </div>
-        {errors.root ? <p className="text-xs text-danger" role="alert">{errors.root.message}</p> : null}
+        {errors.root ? (
+          <p className="text-xs text-danger" role="alert">
+            {errors.root.message}
+          </p>
+        ) : null}
         <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={isSubmitting || create.isPending} data-testid="project-submit">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={isSubmitting || create.isPending}
+            data-testid="project-submit"
+          >
             {create.isPending ? 'Creating…' : 'Create project'}
           </Button>
         </div>
@@ -72,6 +110,7 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
 export function ProjectsPage() {
   const { data, isLoading } = useProjects(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [projectToArchive, setProjectToArchive] = useState<ProjectDto | null>(null);
   const archive = useArchiveProject();
 
   if (isLoading) return <Spinner />;
@@ -101,9 +140,16 @@ export function ProjectsPage() {
           {active.map((p) => (
             <li key={p.id} className="rounded-lg border border-border bg-surface p-3">
               <div className="flex items-center gap-3">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color ?? 'var(--color-accent)' }} />
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: p.color ?? 'var(--color-accent)' }}
+                />
                 <div className="min-w-0 flex-1">
-                  <Link to={`/p/${p.slug}/board`} className="text-sm font-medium hover:text-accent" data-testid={`project-link-${p.slug}`}>
+                  <Link
+                    to={`/p/${p.slug}/board`}
+                    className="text-sm font-medium hover:text-accent"
+                    data-testid={`project-link-${p.slug}`}
+                  >
                     {p.name}
                   </Link>
                   <div className="mt-0.5 truncate text-xs text-text-muted">
@@ -116,12 +162,14 @@ export function ProjectsPage() {
                   size="sm"
                   title="Archive project"
                   aria-label={`Archive ${p.name}`}
-                  onClick={() => archive.mutate({ projectId: p.id, archived: false })}
+                  onClick={() => setProjectToArchive(p)}
                 >
                   <Archive size={14} />
                 </Button>
               </div>
-              {p.description ? <p className="mt-2 text-xs text-text-muted">{p.description}</p> : null}
+              {p.description ? (
+                <p className="mt-2 text-xs text-text-muted">{p.description}</p>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -129,10 +177,15 @@ export function ProjectsPage() {
 
       {archivedList.length > 0 ? (
         <div className="mt-8">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Archived</h2>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">
+            Archived
+          </h2>
           <ul className="space-y-2">
             {archivedList.map((p) => (
-              <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border bg-surface/60 p-3 opacity-75">
+              <li
+                key={p.id}
+                className="flex items-center gap-3 rounded-lg border border-border bg-surface/60 p-3 opacity-75"
+              >
                 <span className="min-w-0 flex-1 text-sm">
                   {p.name} <span className="text-xs text-text-muted">· {p.projectKey}</span>
                 </span>
@@ -140,7 +193,7 @@ export function ProjectsPage() {
                   variant="ghost"
                   size="sm"
                   title="Unarchive project"
-                  onClick={() => archive.mutate({ projectId: p.id, archived: true })}
+                  onClick={() => archive.mutate({ projectId: p.id, shouldArchive: false })}
                 >
                   <ArchiveRestore size={14} />
                 </Button>
@@ -151,6 +204,23 @@ export function ProjectsPage() {
       ) : null}
 
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ConfirmDialog
+        open={projectToArchive !== null}
+        onClose={() => setProjectToArchive(null)}
+        onConfirm={async () => {
+          if (!projectToArchive) return;
+          await archive.mutateAsync({ projectId: projectToArchive.id, shouldArchive: true });
+        }}
+        title="Archive project?"
+        description={
+          <>
+            <span className="font-medium text-text">{projectToArchive?.name}</span> will be hidden
+            from active projects. Its tickets and history will be preserved, and the project can be
+            restored later.
+          </>
+        }
+        confirmLabel="Archive project"
+      />
     </div>
   );
 }

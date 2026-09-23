@@ -20,5 +20,30 @@ export default defineConfig({
   },
   build: {
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Markdown rendering is only needed on the ticket detail page; keep it
+        // out of the initial bundle so first paint stays lean.
+        manualChunks(id) {
+          if (
+            id.includes('react-markdown') ||
+            id.includes('remark-') ||
+            id.includes('rehype-') ||
+            id.includes('micromark') ||
+            id.includes('mdast') ||
+            id.includes('hast') ||
+            id.includes('unified') ||
+            id.includes('vfile') ||
+            id.includes('decode-named-character-reference') ||
+            id.includes('character-entities') ||
+            id.includes('property-information') ||
+            id.includes('space-separated-tokens') ||
+            id.includes('comma-separated-tokens')
+          ) {
+            return 'markdown';
+          }
+        },
+      },
+    },
   },
 });

@@ -18,10 +18,16 @@ import {
   createTicket,
   getBoard,
   getTicketDetail,
+  getTicketByNumber,
   setTicketArchived,
   updateTicket,
   searchTickets,
 } from './tickets.service.js';
+import {
+  getProjectDashboard,
+  getAccomplishments,
+  getTagsForTickets,
+} from './insights.service.js';
 import {
   addChecklistItem,
   deleteChecklistItem,
@@ -82,7 +88,46 @@ projectTicketsRouter.get('/:projectId/tickets', async (req, res, next) => {
       sortBy: sort.sortBy ?? 'ticketNumber',
       sortDir: sort.sortDir ?? 'asc',
     });
-    res.json(list);
+    // Phase 3: attach tag chips in ONE batched query (no N+1 per row).
+    const tagMap = await getTagsForTickets(list.tickets.map((t) => t.id));
+    res.json({
+      ...list,
+      tickets: list.tickets.map((t) => ({ ...t, tags: tagMap.get(t.id) ?? [] })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/projects/:projectId/tickets/by-number/:ticketNumber — direct lookup
+projectTicketsRouter.get('/:projectId/tickets/by-number/:ticketNumber', async (req, res, next) => {
+  try {
+    const ticket = await getTicketByNumber(
+      requireProjectIdParam(req),
+      req.user!.id,
+      req.params.ticketNumber ?? ''
+    );
+    res.json({ ticket });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/projects/:projectId/dashboard — counts + recent lists
+projectTicketsRouter.get('/:projectId/dashboard', async (req, res, next) => {
+  try {
+    const dashboard = await getProjectDashboard(requireProjectIdParam(req), req.user!.id);
+    res.json(dashboard);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/projects/:projectId/accomplishments — deployed grouped by recency
+projectTicketsRouter.get('/:projectId/accomplishments', async (req, res, next) => {
+  try {
+    const accomplishments = await getAccomplishments(requireProjectIdParam(req), req.user!.id);
+    res.json(accomplishments);
   } catch (err) {
     next(err);
   }

@@ -21,7 +21,7 @@ import { ApiError } from '../../lib/errors.js';
 
 type TicketRow = typeof tickets.$inferSelect;
 
-function toDto(row: TicketRow, projectKey: string): TicketDto {
+export function toDto(row: TicketRow, projectKey: string): TicketDto {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -562,4 +562,54 @@ export async function setTicketArchived(
 ): Promise<TicketDto> {
   const { ticket } = await getOwnedTicketContextOr404(ticketId, ownerId);
   return updateTicket(ticketId, ownerId, { version: ticket.version, archived });
+}
+
+// ---------------------------------------------------------------------------
+// Direct ticket lookup by project-local number or display ID (Phase 3).
+// Owner-scoped; foreign project/ticket → 404. Used for relation click-through
+// and display-ID entry (TMR-042 → ticket). Never discloses foreign existence.
+// ---------------------------------------------------------------------------
+export async function getTicketByNumber(
+  projectId: string,
+  ownerId: string,
+  rawNumber: string
+): Promise<TicketDto> {
+  const project = await getOwnedProjectOr404Row(projectId, ownerId);
+
+  // Accept bare "42" or full display ID "TMR-042" (case-insensitive on key).
+  let number: number;
+  const display = /^([A-Za-z0-9]+)-0*(\d+)$/.exec(rawNumber.trim());
+  if (display) {
+    if (display[1].toUpperCase() !== project.projectKey.toUpperCase()) {
+      throw ApiError.notFound('Ticket not found');
+    }
+    number = Number(display[2]);
+  } else if (/^\d+$/.test(rawNumber.trim())) {
+    number = Number(rawNumber.trim());
+  } else {
+    throw ApiError.validation('Invalid ticket number');
+  }
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw ApiError.validation('Invalid ticket number');
+  }
+
+  const rows = await db_readTicket(project.id, number);
+  if (!rows) throw ApiError.notFound('Ticket not found');
+  return rows;
+}
+
+async function db_readTicket(
+  projectId: string,
+  ticketNumber: number
+): Promise<TicketDto | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ ticket: tickets, projectKey: projects.projectKey })
+    .from(tickets)
+    .innerJoin(projects, eq(projects.id, tickets.projectId))
+    .where(and(eq(tickets.projectId, projectId), eq(tickets.ticketNumber, ticketNumber)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return toDto(row.ticket, row.projectKey);
 }

@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -18,11 +19,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderDetail(ticketResponse: object, extraRoutes: Parameters<typeof installFetchRouter>[0] = []) {
+function renderDetail(
+  ticketResponse: object,
+  extraRoutes: Parameters<typeof installFetchRouter>[0] = [],
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = installFetchRouter([
     { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
-    { method: 'GET', prefix: '/api/projects', respond: () => jsonResponse({ projects: [mockProject()] }) },
+    {
+      method: 'GET',
+      prefix: '/api/projects',
+      respond: () => jsonResponse({ projects: [mockProject()] }),
+    },
     { method: 'GET', prefix: '/api/tickets/tkt-1', respond: () => jsonResponse(ticketResponse) },
     ...extraRoutes,
   ]);
@@ -32,10 +40,11 @@ function renderDetail(ticketResponse: object, extraRoutes: Parameters<typeof ins
         <AuthProvider>
           <Routes>
             <Route path="/p/:slug/tickets/:ticketId" element={<TicketDetailPage />} />
+            <Route path="/p/:slug/board" element={<div>Board</div>} />
           </Routes>
         </AuthProvider>
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
   return { router };
 }
@@ -52,7 +61,7 @@ describe('Markdown rendering security', () => {
           '<img src=x onerror="alert(1)">',
           '[click](javascript:alert(1))',
         ].join('\n')}
-      />
+      />,
     );
     // No executable script element; raw text may survive as inert text.
     expect(container.querySelector('script')).toBeNull();
@@ -76,7 +85,7 @@ describe('Markdown rendering security', () => {
           '',
           '[site](https://example.com)',
         ].join('\n')}
-      />
+      />,
     );
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { checked: true })).toBeInTheDocument();
@@ -102,6 +111,64 @@ describe('shortCommitHash', () => {
 // Detail page
 // ---------------------------------------------------------------------------
 describe('TicketDetailPage Phase 2', () => {
+  it('requires confirmation before archiving a ticket', async () => {
+    const user = userEvent.setup();
+    const { router } = renderDetail(mockDetail(mockTicket({ id: 'tkt-1' })), [
+      {
+        method: 'POST',
+        prefix: '/api/tickets/tkt-1/archive',
+        respond: () =>
+          jsonResponse({
+            ticket: mockTicket({ id: 'tkt-1', archivedAt: '2026-09-03T00:00:00.000Z' }),
+          }),
+      },
+    ]);
+
+    await user.click(await screen.findByTestId('ticket-archive'));
+    let dialog = screen.getByRole('alertdialog', { name: 'Archive ticket?' });
+    expect(dialog).toHaveTextContent('TMR-001: First ticket');
+    expect(router.getCalls().some((call) => call.method === 'POST')).toBe(false);
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog', { name: 'Archive ticket?' })).not.toBeInTheDocument();
+    expect(router.getCalls().some((call) => call.method === 'POST')).toBe(false);
+
+    await user.click(screen.getByTestId('ticket-archive'));
+    dialog = screen.getByRole('alertdialog', { name: 'Archive ticket?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Archive ticket' }));
+
+    await waitFor(() => {
+      expect(router.getCalls()).toContainEqual({
+        method: 'POST',
+        url: '/api/tickets/tkt-1/archive',
+        body: undefined,
+      });
+    });
+  });
+
+  it('restores an archived ticket through the restore endpoint', async () => {
+    const user = userEvent.setup();
+    const archivedTicket = mockTicket({ id: 'tkt-1', archivedAt: '2026-09-03T00:00:00.000Z' });
+    const { router } = renderDetail(mockDetail(archivedTicket), [
+      {
+        method: 'POST',
+        prefix: '/api/tickets/tkt-1/restore',
+        respond: () => jsonResponse({ ticket: mockTicket({ id: 'tkt-1', archivedAt: null }) }),
+      },
+    ]);
+
+    await user.click(await screen.findByTestId('ticket-restore'));
+
+    await waitFor(() => {
+      expect(router.getCalls()).toContainEqual({
+        method: 'POST',
+        url: '/api/tickets/tkt-1/restore',
+        body: undefined,
+      });
+    });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('renders blocked state with badge and unblock control', async () => {
     renderDetail(
       mockDetail(
@@ -110,12 +177,14 @@ describe('TicketDetailPage Phase 2', () => {
           status: 'IMPLEMENTED',
           isBlocked: true,
           blockedReason: 'Waiting for production mailbox test',
-        })
-      )
+        }),
+      ),
     );
     await waitFor(() => expect(screen.getByTestId('ticket-title-input')).toBeInTheDocument());
     expect(screen.getByTestId('blocked-badge')).toBeInTheDocument();
-    expect(screen.getByTestId('blocked-reason-box')).toHaveTextContent('Waiting for production mailbox test');
+    expect(screen.getByTestId('blocked-reason-box')).toHaveTextContent(
+      'Waiting for production mailbox test',
+    );
     expect(screen.getByTestId('ticket-unblock')).toBeInTheDocument();
     // Lifecycle status unchanged in header.
     expect(screen.getByTestId('ticket-status')).toHaveValue('IMPLEMENTED');
@@ -123,13 +192,21 @@ describe('TicketDetailPage Phase 2', () => {
 
   it('shows LIMITATIONS indicator for limitations-bearing tickets', async () => {
     renderDetail(
-      mockDetail(mockTicket({ id: 'tkt-1', status: 'DEPLOYED', limitations: 'mailbox rendering unverified' }))
+      mockDetail(
+        mockTicket({
+          id: 'tkt-1',
+          status: 'DEPLOYED',
+          limitations: 'mailbox rendering unverified',
+        }),
+      ),
     );
     await waitFor(() => expect(screen.getByTestId('limitations-badge')).toBeInTheDocument());
   });
 
   it('shows the deployment-notes prompt for DEPLOYED tickets without notes', async () => {
-    renderDetail(mockDetail(mockTicket({ id: 'tkt-1', status: 'DEPLOYED', deploymentNotes: null })));
+    renderDetail(
+      mockDetail(mockTicket({ id: 'tkt-1', status: 'DEPLOYED', deploymentNotes: null })),
+    );
     await waitFor(() => expect(screen.getByTestId('deploy-notes-prompt')).toBeInTheDocument());
   });
 
@@ -150,7 +227,7 @@ describe('TicketDetailPage Phase 2', () => {
     expect(commit).not.toHaveTextContent('bf4e0ae6a728674f507011635d58b9bb2346cdc2');
     expect(commit).toHaveAttribute(
       'href',
-      'https://github.com/zakisu/temarione/commit/bf4e0ae6a728674f507011635d58b9bb2346cdc2'
+      'https://github.com/zakisu/temarione/commit/bf4e0ae6a728674f507011635d58b9bb2346cdc2',
     );
   });
 
@@ -203,13 +280,57 @@ describe('TicketDetailPage Phase 2', () => {
     expect(activity).toHaveTextContent('Blocked — waiting on OPS3B');
     expect(activity).toHaveTextContent('Unblocked (previous reason: waiting on OPS3B)');
   });
+
+  it('requires confirmation before removing ticket content', async () => {
+    const user = userEvent.setup();
+    const { router } = renderDetailWithSubResources([
+      {
+        method: 'DELETE',
+        prefix: '/api/tickets/tkt-1/checklist/chk-1',
+        respond: () => jsonResponse(undefined, 204),
+      },
+    ]);
+    await screen.findByTestId('checklist');
+
+    await user.click(screen.getAllByRole('button', { name: 'Delete item' })[0]);
+    let dialog = screen.getByRole('alertdialog', { name: 'Delete checklist item?' });
+    expect(dialog).toHaveTextContent('API implementation');
+    expect(router.getCalls().some((call) => call.method === 'DELETE')).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Remove link' }));
+    dialog = screen.getByRole('alertdialog', { name: 'Remove link?' });
+    expect(router.getCalls().some((call) => call.method === 'DELETE')).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Remove relation' }));
+    dialog = screen.getByRole('alertdialog', { name: 'Remove relation?' });
+    expect(dialog).toHaveTextContent('TMR-009');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Remove tag historical' }));
+    dialog = screen.getByRole('alertdialog', { name: 'Remove tag?' });
+    expect(dialog).toHaveTextContent('historical');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getAllByRole('button', { name: 'Delete item' })[0]);
+    dialog = screen.getByRole('alertdialog', { name: 'Delete checklist item?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete item' }));
+    await waitFor(() => {
+      expect(router.getCalls()).toContainEqual({
+        method: 'DELETE',
+        url: '/api/tickets/tkt-1/checklist/chk-1',
+        body: undefined,
+      });
+    });
+  });
 });
 
 /**
  * Detail fixture with real sub-resources: checklist, commit link, tag, relation.
  * Renders the page through a dedicated fetch router.
  */
-function renderDetailWithSubResources() {
+function renderDetailWithSubResources(extraRoutes: Parameters<typeof installFetchRouter>[0] = []) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ticket = {
     ...mockDetail(mockTicket({ id: 'tkt-1' })).ticket,
@@ -255,13 +376,24 @@ function renderDetailWithSubResources() {
         createdAt: '2026-09-01T00:00:00.000Z',
       },
     ],
-    tags: [{ id: 'tag-1', projectId: 'proj-1', name: 'historical', slug: 'historical', color: null }],
+    tags: [
+      { id: 'tag-1', projectId: 'proj-1', name: 'historical', slug: 'historical', color: null },
+    ],
   };
-  installFetchRouter([
+  const router = installFetchRouter([
     { method: 'GET', prefix: '/api/auth/me', respond: () => jsonResponse({ user: mockUser() }) },
-    { method: 'GET', prefix: '/api/projects/proj-1/tags', respond: () => jsonResponse({ tags: [] }) },
-    { method: 'GET', prefix: '/api/projects', respond: () => jsonResponse({ projects: [mockProject()] }) },
+    {
+      method: 'GET',
+      prefix: '/api/projects/proj-1/tags',
+      respond: () => jsonResponse({ tags: [] }),
+    },
+    {
+      method: 'GET',
+      prefix: '/api/projects',
+      respond: () => jsonResponse({ projects: [mockProject()] }),
+    },
     { method: 'GET', prefix: '/api/tickets/tkt-1', respond: () => jsonResponse({ ticket }) },
+    ...extraRoutes,
   ]);
   render(
     <QueryClientProvider client={qc}>
@@ -272,6 +404,7 @@ function renderDetailWithSubResources() {
           </Routes>
         </AuthProvider>
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
+  return { router };
 }

@@ -1,22 +1,33 @@
 /**
- * Generates the next Drizzle migration WITHOUT interactive rename prompts.
+ * Generates the next Drizzle migration WITHOUT interactive rename prompts —
+ * and WITHOUT guessing.
  *
- * drizzle-kit 0.28 opens an interactive hanji select prompt whenever it
- * *guesses* a column was renamed (e.g. tags.owner_id -> tags.project_id).
- * Under CI/agents that prompt consumes stdin forever. Drizzle exposes no
- * --force flag.
+ * PRODUCT/OPERATIONS INVARIANT (decided at Phase 3, pre-production):
+ * this script must never silently interpret an ambiguous drizzle-kit rename
+ * question as drop+create once real data exists. Ambiguity is a human decision.
  *
- * Strategy: hanji lazily requires('readline') and calls createInterface at
- * prompt time. We temporarily wrap readline.createInterface so that, whenever
- * a prompt terminal opens, a synthetic Enter keypress is emitted on stdin at
- * short intervals until the prompt resolves with the default option ("create
- * column" — i.e. NO rename). The first press resolves; the rest are no-ops.
+ * Behavior:
+ * - A prompt only opens when drizzle-kit GUESSES a column/table rename
+ *   (created + deleted columns in the same table diff). The prompt itself is
+ *   the ambiguity signal.
+ * - The first time a prompt opens, this script records the ambiguity, then
+ *   ABORTS generation with a clear message and exit code 2. NOTHING is written
+ *   — no migration file, no snapshot, no journal entry.
+ * - The developer then resolves the ambiguity deliberately:
+ *     a) rename it intentionally in the schema (preferred: drizzle _meta
+ *        columns/internal annotations), or
+ *     b) confirm drop+create is correct (e.g. column repurposed, dev data only)
+ *        and pass --allow-destructive=<table.column>[,<table.column>] to accept
+ *        exactly those columns' drop+create.
+ *   With --allow-destructive, the prompt is answered "create column" ONLY for
+ *   the explicitly listed columns; any OTHER prompt still aborts.
  *
- * Drop+create (no rename) is the correct semantics for this project:
- * pre-production dev data only, and owner_id -> project_id on tags is not a
- * data-preserving rename anyway.
+ * The generated SQL must ALWAYS be reviewed by a human before commit,
+ * regardless of flags.
  *
- * Usage: node scripts/gen-migration.mjs <migration_name>
+ * Usage:
+ *   node scripts/gen-migration.mjs <migration_name>
+ *   node scripts/gen-migration.mjs <migration_name> --allow-destructive=tags.owner_id
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -31,9 +42,15 @@ const outDir = join(apiDir, 'drizzle');
 const metaDir = join(outDir, 'meta');
 const journalPath = join(metaDir, '_journal.json');
 
-const name = process.argv[2];
+const args = process.argv.slice(2);
+const name = args[0];
+const destructiveFlag = args.find((a) => a.startsWith('--allow-destructive='));
+const allowedDestructive = new Set(
+  destructiveFlag ? destructiveFlag.split('=')[1].split(',').map((s) => s.trim()) : []
+);
+
 if (!name || !/^[a-z0-9_]+$/i.test(name)) {
-  console.error('Usage: node scripts/gen-migration.mjs <migration_name>');
+  console.error('Usage: node scripts/gen-migration.mjs <migration_name> [--allow-destructive=table.column,...]');
   process.exit(1);
 }
 
@@ -49,16 +66,38 @@ const prevSnapshotPath = existsSync(join(metaDir, `${lastEntry.tag}.json`))
   : join(metaDir, '0000_snapshot.json'); // drizzle-kit names the first snapshot 0000_snapshot.json
 const prevSnapshot = JSON.parse(readFileSync(prevSnapshotPath, 'utf8'));
 
-// 2. Wrap readline.createInterface: every new hanji prompt terminal gets a
-//    steady stream of synthetic Enter presses on its stdin.
+// 2. Wrap readline.createInterface so a hanji prompt resolves with the default
+//    ("create column" — NO rename). Default-safe: only prompts for columns the
+//    developer explicitly allow-listed resolve; anything else aborts the run.
 const origCreateInterface = readline.createInterface;
 const timers = [];
+let ambiguousColumns = []; // filled as prompts fire
+let aborted = false;
+
 try {
   readline.createInterface = function patched(options) {
     const rl = origCreateInterface.apply(this, arguments);
     const stdin = options?.input ?? process.stdin;
+    let presses = 0;
     const timer = setInterval(() => {
-      stdin.emit('keypress', '\r', { name: 'return' });
+      presses += 1;
+      // hanji attaches its keypress listener synchronously after
+      // createInterface; by the second tick the prompt is live and its view
+      // exposes the item being resolved.
+      if (presses < 2) return;
+      clearInterval(timer);
+      const tableName = rl?.view?.tableName ?? rl?.view?.name ?? '(unknown table)';
+      const columnName = rl?.view?.created?.name ?? rl?.view?.data?.to?.name ?? '(unknown column)';
+      const key = `${tableName}.${columnName}`;
+      if (allowedDestructive.has(key)) {
+        console.error(`[gen] allowing explicit drop+create for ${key} (--allow-destructive)`);
+        stdin.emit('keypress', '\r', { name: 'return' });
+      } else {
+        ambiguousColumns.push(key);
+        aborted = true;
+        // Abort the prompt itself so drizzle-kit unwinds instead of hanging.
+        stdin.emit('keypress', '', { name: 'escape', ctrl: false });
+      }
     }, 50);
     timer.unref?.();
     timers.push(timer);
@@ -94,11 +133,46 @@ try {
   }
   console.error('[gen] building current snapshot...');
   const curSnapshot = await kit.generateMySQLDrizzleJson(tableExports);
-  console.error('[gen] diffing snapshots (rename prompts auto-answered)...');
-  const statements = await kit.generateMySQLMigration(prevSnapshot, curSnapshot);
+  console.error('[gen] diffing snapshots (ambiguous renames abort)...');
+  let statements;
+  try {
+    statements = await kit.generateMySQLMigration(prevSnapshot, curSnapshot);
+  } catch (err) {
+    // An aborted hanji prompt surfaces as an error or process exit inside the
+    // kit; translate it into our explicit ambiguity message below.
+    if (aborted) statements = null;
+    else throw err;
+  }
+  for (const t of timers) clearInterval(t);
+
+  if (aborted) {
+    console.error('');
+    console.error('════════════════════════════════════════════════════════════');
+    console.error('AMBIGUOUS SCHEMA CHANGE — MIGRATION NOT GENERATED.');
+    console.error('');
+    console.error('drizzle-kit detected possible renames and asked for a decision.');
+    console.error('This script refuses to guess (drop+create destroys data).');
+    console.error('');
+    console.error('Ambiguous at:');
+    for (const key of ambiguousColumns) console.error(`  - ${key}`);
+    console.error('');
+    console.error('Resolve deliberately, then re-run:');
+    console.error('  a) If it IS a rename: encode the rename in the schema/meta and');
+    console.error('     regenerate so drizzle-kit emits ALTER ... RENAME.');
+    console.error('  b) If drop+create is genuinely correct (data disposable), re-run with:');
+    console.error(`     --allow-destructive=${ambiguousColumns.join(',')}`);
+    console.error('════════════════════════════════════════════════════════════');
+    process.exit(2);
+  }
+  if (aborted === false && ambiguousColumns.length > 0) {
+    // Prompts fired but generation completed — only possible when all were
+    // explicitly allow-listed.
+    console.error(`[gen] ${ambiguousColumns.length} destructive column change(s) allowed explicitly.`);
+  }
+
   console.error('[gen] diff complete');
 
-  if (statements.length === 0) {
+  if (statements === null || statements.length === 0) {
     console.log('No schema changes detected; nothing to generate.');
     process.exit(0);
   }
@@ -133,6 +207,8 @@ try {
 
   console.log(`Generated drizzle/${tag}.sql (${statements.length} statements)`);
   console.log(sql);
+  console.error('');
+  console.error('REVIEW THE GENERATED SQL BEFORE COMMITTING — this is a hard rule.');
 } finally {
   readline.createInterface = origCreateInterface;
   for (const t of timers) clearInterval(t);

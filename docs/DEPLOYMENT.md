@@ -19,7 +19,9 @@ cd zakisu-tickets
 
 ## 2. Configure environment
 
-Create `apps/api/.env` (never commit it):
+Create `apps/api/.env` (never commit it). The API resolves this path relative to
+its own compiled module, so it works whether the process starts from the
+repository root or from `apps/api`:
 
 ```ini
 NODE_ENV=production
@@ -32,7 +34,8 @@ LOG_LEVEL=info
 
 Notes:
 
-- Passenger/cPanel injects `PORT`/`DSP_PORT`; the app respects `PORT`.
+- Passenger/cPanel may inject `PORT` or `DSP_PORT`; the app supports both and
+  gives an explicit `PORT` precedence.
 - `Secure` cookies and `upgrade-insecure-requests` CSP turn on automatically when
   `NODE_ENV=production`.
 

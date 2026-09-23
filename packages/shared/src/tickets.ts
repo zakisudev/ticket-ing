@@ -95,6 +95,11 @@ export interface TicketDto {
   deployedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Tag chips, attached by list views in one batched query (no N+1).
+   * Absent ([]) on endpoints that do not join tags.
+   */
+  tags?: TagDto[];
 }
 
 export interface TicketActivityDto {
@@ -280,4 +285,50 @@ export type ListSortField = z.infer<typeof listSortFieldsSchema>;
 export interface TicketListDto {
   tickets: TicketDto[];
   total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: project insights (dashboard / focus / accomplishments)
+// ---------------------------------------------------------------------------
+
+export interface ProjectDashboardDto {
+  projectId: string;
+  projectKey: string;
+  counts: {
+    planned: number;
+    inProgress: number;
+    implemented: number;
+    tested: number;
+    deployed: number;
+    /** Orthogonal condition — overlaps lifecycle counts. */
+    blocked: number;
+  };
+  recentlyUpdated: TicketDto[];
+  recentlyDeployed: TicketDto[];
+  currentBlockers: TicketDto[];
+}
+
+export type FocusGroupKey =
+  | 'in_progress'
+  | 'blocked'
+  | 'implemented_awaiting_test'
+  | 'tested_awaiting_deploy';
+
+export interface FocusGroupDto {
+  key: FocusGroupKey;
+  tickets: TicketDto[];
+}
+
+export interface FocusDto {
+  groups: FocusGroupDto[];
+}
+
+export interface AccomplishmentsDto {
+  groups: {
+    key: 'today' | 'this_week' | 'this_month' | 'older';
+    label: string;
+    tickets: TicketDto[];
+    /** DEPLOYED tickets with missing deployedAt — surfaced, never fabricated. */
+    dataIssues: { ticketId: string; displayId: string; issue: string }[];
+  }[];
 }

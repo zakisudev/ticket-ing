@@ -1,19 +1,22 @@
 import { useContext, useState } from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router';
+import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router';
 import { clsx } from 'clsx';
 import {
   Archive,
+  CalendarCheck,
+  CircleDot,
+  Columns3,
   FolderKanban,
   KeyRound,
+  LayoutDashboard,
   LayoutList,
   LogOut,
   Menu,
   Moon,
   Sun,
-  X,
+  X
 } from 'lucide-react';
 import { AuthContext } from '@/features/auth/AuthContext';
-import { AuthProvider } from '@/features/auth/AuthContext';
 import { useLogout, useProjects } from '@/api/hooks';
 import { loadThemePreference, saveThemePreference, type ThemePreference } from '@/lib/theme';
 import { Button } from '@/components/ui';
@@ -64,9 +67,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </NavLink>
       </nav>
 
-      <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-        Projects
-      </div>
+      <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Projects</div>
       <div className="flex-1 overflow-y-auto px-2 pb-2 scroll-slim" data-testid="sidebar-projects">
         {projects.map((p) => (
           <NavLink
@@ -80,17 +81,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               )
             }
           >
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: p.color ?? 'var(--color-accent)' }}
-            />
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: p.color ?? 'var(--color-accent)' }} />
             <span className="truncate">{p.name}</span>
             <span className="ml-auto text-[10px] text-text-muted">{p.projectKey}</span>
           </NavLink>
         ))}
-        {projects.length === 0 ? (
-          <div className="px-2 py-1.5 text-xs text-text-muted">No projects yet</div>
-        ) : null}
+        {projects.length === 0 ? <div className="px-2 py-1.5 text-xs text-text-muted">No projects yet</div> : null}
       </div>
 
       <div className="flex items-center justify-between border-t border-border px-3 py-2">
@@ -121,46 +117,87 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <AuthProvider>
-      <div className="flex h-full">
-        {/* Desktop sidebar */}
-        <aside className="hidden w-60 shrink-0 border-r border-border bg-surface md:block">
-          <SidebarContent />
-        </aside>
+    <div className="flex h-full">
+      {/* Desktop sidebar */}
+      <aside className="hidden w-60 shrink-0 border-r border-border bg-surface md:block">
+        <SidebarContent />
+      </aside>
 
-        {/* Mobile drawer */}
-        {mobileOpen ? (
-          <div className="fixed inset-0 z-40 md:hidden">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-            <aside className="absolute left-0 top-0 h-full w-64 border-r border-border bg-surface shadow-xl">
-              <button
-                className="absolute right-2 top-2 text-text-muted hover:text-text"
-                onClick={() => setMobileOpen(false)}
-                aria-label="Close navigation"
-              >
-                <X size={16} />
-              </button>
-              <SidebarContent onNavigate={() => setMobileOpen(false)} />
-            </aside>
-          </div>
-        ) : null}
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* Mobile topbar */}
-          <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
-            <button onClick={() => setMobileOpen(true)} aria-label="Open navigation" className="text-text-muted hover:text-text">
-              <Menu size={18} />
+      {/* Mobile drawer */}
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
+          <aside className="absolute left-0 top-0 h-full w-64 border-r border-border bg-surface shadow-xl">
+            <button
+              className="absolute right-2 top-2 text-text-muted hover:text-text"
+              onClick={() => setMobileOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X size={16} />
             </button>
-            <Link to="/projects" className="text-sm font-bold tracking-tight">Zakisu Tickets</Link>
-            <div className="ml-auto"><ThemeToggle /></div>
-          </div>
-
-          <main className="min-h-0 flex-1 overflow-y-auto scroll-slim">
-            <Outlet />
-          </main>
+            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+          </aside>
         </div>
+      ) : null}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile topbar */}
+        <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
+          <button onClick={() => setMobileOpen(true)} aria-label="Open navigation" className="text-text-muted hover:text-text">
+            <Menu size={18} />
+          </button>
+          <Link to="/projects" className="text-sm font-bold tracking-tight">
+            Zakisu Tickets
+          </Link>
+          <div className="ml-auto">
+            <ThemeToggle />
+          </div>
+        </div>
+
+        <ProjectTabs />
+
+        <main className="min-h-0 flex-1 overflow-y-auto scroll-slim">
+          <Outlet />
+        </main>
       </div>
-    </AuthProvider>
+    </div>
+  );
+}
+
+const PROJECT_TABS = [
+  { segment: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { segment: 'board', label: 'Board', icon: Columns3 },
+  { segment: 'list', label: 'List', icon: LayoutList },
+  { segment: 'focus', label: 'Focus', icon: CircleDot },
+  { segment: 'accomplishments', label: 'Shipped', icon: CalendarCheck }
+] as const;
+
+/** Contextual project navigation: visible whenever the URL is /p/:slug/*. */
+function ProjectTabs() {
+  const { slug } = useParams<{ slug: string }>();
+  if (!slug) return null;
+  return (
+    <nav
+      aria-label="Project sections"
+      className="flex items-center gap-0.5 overflow-x-auto border-b border-border bg-surface px-2 py-1 scroll-slim md:px-4"
+      data-testid="project-tabs"
+    >
+      {PROJECT_TABS.map(({ segment, label, icon: Icon }) => (
+        <NavLink
+          key={segment}
+          to={`/p/${slug}/${segment}`}
+          className={({ isActive }) =>
+            clsx(
+              'flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs',
+              isActive ? 'bg-accent-soft font-medium text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text'
+            )
+          }
+        >
+          <Icon size={12} />
+          {label}
+        </NavLink>
+      ))}
+    </nav>
   );
 }
 

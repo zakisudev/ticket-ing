@@ -37,14 +37,19 @@ import {
   useProjects,
   useReorderChecklistItem,
   useTicket,
+  useTicketByNumber,
   useUpdateChecklistItem,
 } from '@/api/hooks';
 import type { TagDto } from '@zakisu-tickets/shared';
 import { ApiClientError } from '@/api/client';
+
+/** v4-shaped UUID — used to distinguish raw ids from display IDs in relation entry. */
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { Markdown, shortCommitHash } from '@/components/Markdown';
 import {
   BlockedBadge,
   Button,
+  ConfirmDialog,
   Input,
   LimitationsBadge,
   PriorityBadge,
@@ -72,12 +77,32 @@ type LongField =
 const LONG_FIELDS: { key: LongField; label: string; placeholder: string; rows: number }[] = [
   { key: 'summary', label: 'Summary', placeholder: 'One-line summary', rows: 2 },
   { key: 'motivation', label: 'Why', placeholder: 'Why does this ticket exist?', rows: 3 },
-  { key: 'description', label: 'Description', placeholder: 'Details, context, references… (Markdown supported)', rows: 8 },
-  { key: 'acceptanceCriteria', label: 'Acceptance Criteria', placeholder: 'What must be true to call this done?', rows: 5 },
-  { key: 'implementationNotes', label: 'Implementation', placeholder: 'Implementation notes…', rows: 5 },
+  {
+    key: 'description',
+    label: 'Description',
+    placeholder: 'Details, context, references… (Markdown supported)',
+    rows: 8,
+  },
+  {
+    key: 'acceptanceCriteria',
+    label: 'Acceptance Criteria',
+    placeholder: 'What must be true to call this done?',
+    rows: 5,
+  },
+  {
+    key: 'implementationNotes',
+    label: 'Implementation',
+    placeholder: 'Implementation notes…',
+    rows: 5,
+  },
   { key: 'testingNotes', label: 'Testing', placeholder: 'Test notes…', rows: 4 },
   { key: 'deploymentNotes', label: 'Deployment', placeholder: 'Deployment notes…', rows: 4 },
-  { key: 'limitations', label: 'Limitations', placeholder: 'Known limitations of this implementation…', rows: 4 },
+  {
+    key: 'limitations',
+    label: 'Limitations',
+    placeholder: 'Known limitations of this implementation…',
+    rows: 4,
+  },
   { key: 'knownIssues', label: 'Known Issues', placeholder: 'Known issues…', rows: 4 },
   { key: 'followUpNotes', label: 'Follow-ups', placeholder: 'Follow-up work…', rows: 4 },
 ];
@@ -141,7 +166,9 @@ function humanizeActivity(type: string, metadata: Record<string, unknown> | null
     case 'LINK_REMOVED':
       return metadata?.linkType === 'COMMIT' ? 'Commit removed' : 'Link removed';
     case 'RELATION_ADDED':
-      return `Relation added (${String(metadata?.relationType ?? '').replace('_', ' ').toLowerCase()})`;
+      return `Relation added (${String(metadata?.relationType ?? '')
+        .replace('_', ' ')
+        .toLowerCase()})`;
     case 'RELATION_REMOVED':
       return 'Relation removed';
     case 'TAG_ADDED':
@@ -277,6 +304,7 @@ function Checklist({
   const remove = useDeleteChecklistItem(projectId);
   const reorder = useReorderChecklistItem(projectId);
   const [text, setText] = useState('');
+  const [itemToDelete, setItemToDelete] = useState<ChecklistItemDto | null>(null);
 
   const submit = () => {
     const trimmed = text.trim();
@@ -288,78 +316,99 @@ function Checklist({
   const done = items.filter((i) => i.completed).length;
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-3" data-testid="checklist">
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold text-text-muted">Checklist</h3>
-        {items.length > 0 ? (
-          <span className="text-[10px] text-text-muted">
-            {done}/{items.length}
-          </span>
-        ) : null}
-      </div>
-      <ul className="space-y-1">
-        {items.map((item, index) => (
-          <li key={item.id} className="group flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={item.completed}
-              onChange={(e) => update.mutate({ ticketId, itemId: item.id, patch: { completed: e.target.checked } })}
-              aria-label={`Complete ${item.text}`}
-              data-testid={`checklist-check-${index}`}
-            />
-            <span className={item.completed ? 'flex-1 text-text-muted line-through' : 'flex-1'}>
-              {item.text}
+    <>
+      <section className="rounded-lg border border-border bg-surface p-3" data-testid="checklist">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-text-muted">Checklist</h3>
+          {items.length > 0 ? (
+            <span className="text-[10px] text-text-muted">
+              {done}/{items.length}
             </span>
-            <span className="hidden items-center gap-0.5 group-hover:flex">
-              <button
-                type="button"
-                className="px-1 text-text-muted hover:text-text disabled:opacity-30"
-                disabled={index === 0}
-                onClick={() => reorder.mutate({ ticketId, itemId: item.id, direction: 'up' })}
-                aria-label="Move up"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="px-1 text-text-muted hover:text-text disabled:opacity-30"
-                disabled={index === items.length - 1}
-                onClick={() => reorder.mutate({ ticketId, itemId: item.id, direction: 'down' })}
-                aria-label="Move down"
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                className="px-1 text-text-muted hover:text-danger"
-                onClick={() => remove.mutate({ ticketId, itemId: item.id })}
-                aria-label="Delete item"
-              >
-                <Trash2 size={12} />
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
-      <form
-        className="mt-2 flex items-center gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
+          ) : null}
+        </div>
+        <ul className="space-y-1">
+          {items.map((item, index) => (
+            <li key={item.id} className="group flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={item.completed}
+                onChange={(e) =>
+                  update.mutate({
+                    ticketId,
+                    itemId: item.id,
+                    patch: { completed: e.target.checked },
+                  })
+                }
+                aria-label={`Complete ${item.text}`}
+                data-testid={`checklist-check-${index}`}
+              />
+              <span className={item.completed ? 'flex-1 text-text-muted line-through' : 'flex-1'}>
+                {item.text}
+              </span>
+              <span className="hidden items-center gap-0.5 group-hover:flex">
+                <button
+                  type="button"
+                  className="px-1 text-text-muted hover:text-text disabled:opacity-30"
+                  disabled={index === 0}
+                  onClick={() => reorder.mutate({ ticketId, itemId: item.id, direction: 'up' })}
+                  aria-label="Move up"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="px-1 text-text-muted hover:text-text disabled:opacity-30"
+                  disabled={index === items.length - 1}
+                  onClick={() => reorder.mutate({ ticketId, itemId: item.id, direction: 'down' })}
+                  aria-label="Move down"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className="px-1 text-text-muted hover:text-danger"
+                  onClick={() => setItemToDelete(item)}
+                  aria-label="Delete item"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <form
+          className="mt-2 flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <Input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Add checklist item…"
+            className="h-7 text-xs"
+            data-testid="checklist-input"
+          />
+          <Button type="submit" size="sm" variant="ghost" disabled={!text.trim() || add.isPending}>
+            <Plus size={12} />
+          </Button>
+        </form>
+      </section>
+      <ConfirmDialog
+        open={itemToDelete !== null}
+        onClose={() => setItemToDelete(null)}
+        onConfirm={async () => {
+          if (!itemToDelete) return;
+          await remove.mutateAsync({ ticketId, itemId: itemToDelete.id });
         }}
-      >
-        <Input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Add checklist item…"
-          className="h-7 text-xs"
-          data-testid="checklist-input"
-        />
-        <Button type="submit" size="sm" variant="ghost" disabled={!text.trim() || add.isPending}>
-          <Plus size={12} />
-        </Button>
-      </form>
-    </section>
+        title="Delete checklist item?"
+        description={
+          <>“{itemToDelete?.text}” will be permanently deleted. This action cannot be undone.</>
+        }
+        confirmLabel="Delete item"
+      />
+    </>
   );
 }
 
@@ -389,11 +438,15 @@ function Links({
   const [label, setLabel] = useState('');
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [linkToRemove, setLinkToRemove] = useState<TicketLinkDto | null>(null);
 
   const submit = async () => {
     setError(null);
     try {
-      await add.mutateAsync({ ticketId, input: { type, label: label.trim() || null, url: url.trim() } });
+      await add.mutateAsync({
+        ticketId,
+        input: { type, label: label.trim() || null, url: url.trim() },
+      });
       setLabel('');
       setUrl('');
     } catch (err) {
@@ -402,76 +455,97 @@ function Links({
   };
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-3" data-testid="links">
-      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-muted">
-        <Link2 size={12} /> Links & commits
-      </h3>
-      <ul className="space-y-1.5">
-        {links.map((link) => {
-          const short = link.type === 'COMMIT' ? shortCommitHash(link.label) : null;
-          return (
-            <li key={link.id} className="group flex items-center gap-2 text-xs">
-              <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">
-                {link.type.replace('_', ' ')}
-              </span>
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                className={
-                  'truncate hover:text-accent ' +
-                  (link.type === 'COMMIT' ? 'font-mono' : '')
-                }
-                data-testid={link.type === 'COMMIT' ? 'commit-link' : undefined}
-              >
-                {short ?? link.label ?? link.url}
-              </a>
-              <button
-                type="button"
-                className="ml-auto hidden text-text-muted hover:text-danger group-hover:block"
-                onClick={() => remove.mutate({ ticketId, linkId: link.id })}
-                aria-label="Remove link"
-              >
-                <Trash2 size={12} />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <form
-        className="mt-2 flex flex-wrap items-center gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
+    <>
+      <section className="rounded-lg border border-border bg-surface p-3" data-testid="links">
+        <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+          <Link2 size={12} /> Links & commits
+        </h3>
+        <ul className="space-y-1.5">
+          {links.map((link) => {
+            const short = link.type === 'COMMIT' ? shortCommitHash(link.label) : null;
+            return (
+              <li key={link.id} className="group flex items-center gap-2 text-xs">
+                <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">
+                  {link.type.replace('_', ' ')}
+                </span>
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={
+                    'truncate hover:text-accent ' + (link.type === 'COMMIT' ? 'font-mono' : '')
+                  }
+                  data-testid={link.type === 'COMMIT' ? 'commit-link' : undefined}
+                >
+                  {short ?? link.label ?? link.url}
+                </a>
+                <button
+                  type="button"
+                  className="ml-auto hidden text-text-muted hover:text-danger group-hover:block"
+                  onClick={() => setLinkToRemove(link)}
+                  aria-label="Remove link"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <form
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="h-7 text-xs"
+            aria-label="Link type"
+          >
+            {LINK_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t.replace('_', ' ')}
+              </option>
+            ))}
+          </Select>
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={type === 'COMMIT' ? 'Commit hash' : 'Label (optional)'}
+            className="h-7 w-40 text-xs"
+            data-testid="link-label"
+          />
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://…"
+            className="h-7 w-52 text-xs"
+            data-testid="link-url"
+          />
+          <Button type="submit" size="sm" variant="ghost" disabled={!url.trim() || add.isPending}>
+            <Plus size={12} />
+          </Button>
+        </form>
+        {error ? (
+          <p className="mt-1 text-xs text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </section>
+      <ConfirmDialog
+        open={linkToRemove !== null}
+        onClose={() => setLinkToRemove(null)}
+        onConfirm={async () => {
+          if (!linkToRemove) return;
+          await remove.mutateAsync({ ticketId, linkId: linkToRemove.id });
         }}
-      >
-        <Select value={type} onChange={(e) => setType(e.target.value)} className="h-7 text-xs" aria-label="Link type">
-          {LINK_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t.replace('_', ' ')}
-            </option>
-          ))}
-        </Select>
-        <Input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder={type === 'COMMIT' ? 'Commit hash' : 'Label (optional)'}
-          className="h-7 w-40 text-xs"
-          data-testid="link-label"
-        />
-        <Input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://…"
-          className="h-7 w-52 text-xs"
-          data-testid="link-url"
-        />
-        <Button type="submit" size="sm" variant="ghost" disabled={!url.trim() || add.isPending}>
-          <Plus size={12} />
-        </Button>
-      </form>
-      {error ? <p className="mt-1 text-xs text-danger" role="alert">{error}</p> : null}
-    </section>
+        title="Remove link?"
+        description="This link will be removed from the ticket. This action cannot be undone."
+        confirmLabel="Remove link"
+      />
+    </>
   );
 }
 
@@ -505,83 +579,139 @@ function Relations({
 }) {
   const add = useAddRelation(projectId);
   const remove = useDeleteRelation(projectId);
+  const byNumber = useTicketByNumber(projectId);
   const [type, setType] = useState<string>('BLOCKS');
   const [otherId, setOtherId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [relationToRemove, setRelationToRemove] = useState<(typeof relations)[number] | null>(null);
   const navigate = useNavigate();
 
   const submit = async () => {
     setError(null);
+    const raw = otherId.trim();
+    if (!raw) return;
     try {
-      await add.mutateAsync({ ticketId, input: { type, otherTicketId: otherId.trim() } });
+      let resolved = raw;
+      if (uuidRe.test(raw)) {
+        resolved = raw;
+      } else {
+        // Display-ID entry (TMR-042 / 42): resolve through the owner-scoped
+        // by-number endpoint so a wrong key/number fails cleanly.
+        const looked = await byNumber.mutateAsync(raw);
+        resolved = looked.ticket.id;
+      }
+      await add.mutateAsync({ ticketId, input: { type, otherTicketId: resolved } });
       setOtherId('');
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : 'Could not add relation');
+      setError(
+        err instanceof ApiClientError
+          ? err.status === 404
+            ? 'Ticket not found in this project.'
+            : err.message
+          : 'Could not add relation',
+      );
     }
   };
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-3" data-testid="relations">
-      <h3 className="mb-2 text-xs font-semibold text-text-muted">Relations</h3>
-      {relations.length === 0 ? (
-        <p className="mb-2 text-xs text-text-muted">No related tickets yet.</p>
-      ) : (
-        <ul className="space-y-1">
-          {relations.map((rel) => (
-            <li key={`${rel.id}-${rel.otherTicketId}`} className="flex items-center gap-2 text-xs">
-              <span className="w-28 shrink-0 text-text-muted">{RELATION_LABEL[rel.type] ?? rel.type}</span>
-              <button
-                type="button"
-                className="truncate font-mono text-accent hover:underline"
-                onClick={() => {
-                  // Relations are same-project (V1 invariant); the list view is
-                  // the quickest way to reach the other ticket.
-                  navigate(`/p/${projectSlug}/list`);
-                }}
-                data-testid={`relation-${rel.type}`}
+    <>
+      <section className="rounded-lg border border-border bg-surface p-3" data-testid="relations">
+        <h3 className="mb-2 text-xs font-semibold text-text-muted">Relations</h3>
+        {relations.length === 0 ? (
+          <p className="mb-2 text-xs text-text-muted">No related tickets yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {relations.map((rel) => (
+              <li
+                key={`${rel.id}-${rel.otherTicketId}`}
+                className="flex items-center gap-2 text-xs"
               >
-                {rel.otherDisplayId}
-              </button>
-              <span className="truncate text-text-muted">{rel.otherTitle}</span>
-              <button
-                type="button"
-                className="ml-auto hidden text-text-muted hover:text-danger group-hover:block"
-                onClick={() => remove.mutate({ ticketId, relationId: rel.id })}
-                aria-label="Remove relation"
-              >
-                <Trash2 size={12} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <form
-        className="mt-2 flex items-center gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
+                <span className="w-28 shrink-0 text-text-muted">
+                  {RELATION_LABEL[rel.type] ?? rel.type}
+                </span>
+                <button
+                  type="button"
+                  className="truncate font-mono text-accent hover:underline"
+                  onClick={() => {
+                    // Direct click-through via project-local by-number resolution.
+                    navigate(`/p/${projectSlug}/tickets/${rel.otherTicketId}`);
+                  }}
+                  data-testid={`relation-${rel.type}`}
+                >
+                  {rel.otherDisplayId}
+                </button>
+                <span className="truncate text-text-muted">{rel.otherTitle}</span>
+                <button
+                  type="button"
+                  className="ml-auto hidden text-text-muted hover:text-danger group-hover:block"
+                  onClick={() => setRelationToRemove(rel)}
+                  aria-label="Remove relation"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form
+          className="mt-2 flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="h-7 text-xs"
+            aria-label="Relation type"
+          >
+            {RELATION_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t.replace('_', ' ')}
+              </option>
+            ))}
+          </Select>
+          <Input
+            value={otherId}
+            onChange={(e) => setOtherId(e.target.value)}
+            placeholder="TMR-042 or ticket id…"
+            className="h-7 w-44 text-xs"
+            data-testid="relation-other"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="ghost"
+            disabled={!otherId.trim() || add.isPending}
+          >
+            <Plus size={12} />
+          </Button>
+        </form>
+        {error ? (
+          <p className="mt-1 text-xs text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </section>
+      <ConfirmDialog
+        open={relationToRemove !== null}
+        onClose={() => setRelationToRemove(null)}
+        onConfirm={async () => {
+          if (!relationToRemove) return;
+          await remove.mutateAsync({ ticketId, relationId: relationToRemove.id });
         }}
-      >
-        <Select value={type} onChange={(e) => setType(e.target.value)} className="h-7 text-xs" aria-label="Relation type">
-          {RELATION_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t.replace('_', ' ')}
-            </option>
-          ))}
-        </Select>
-        <Input
-          value={otherId}
-          onChange={(e) => setOtherId(e.target.value)}
-          placeholder="TMR-042 or ticket id…"
-          className="h-7 w-44 text-xs"
-          data-testid="relation-other"
-        />
-        <Button type="submit" size="sm" variant="ghost" disabled={!otherId.trim() || add.isPending}>
-          <Plus size={12} />
-        </Button>
-      </form>
-      {error ? <p className="mt-1 text-xs text-danger" role="alert">{error}</p> : null}
-    </section>
+        title="Remove relation?"
+        description={
+          <>
+            The relation to{' '}
+            <span className="font-medium text-text">{relationToRemove?.otherDisplayId}</span> will
+            be removed. The related ticket will not be deleted.
+          </>
+        }
+        confirmLabel="Remove relation"
+      />
+    </>
   );
 }
 
@@ -599,53 +729,72 @@ function Tags({
   const attach = useAttachTag(projectId);
   const detach = useDetachTag(projectId);
   const [newTag, setNewTag] = useState('');
+  const [tagToRemove, setTagToRemove] = useState<TagDto | null>(null);
 
   const attachedIds = new Set(tags.map((t) => t.id));
   const available = (projectTags.data?.tags ?? []).filter((t) => !attachedIds.has(t.id));
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-3" data-testid="tags">
-      <h3 className="mb-2 text-xs font-semibold text-text-muted">Tags</h3>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {tags.map((tag) => (
-          <TagChip key={tag.id} tag={tag} onRemove={() => detach.mutate({ ticketId, tagId: tag.id })} />
-        ))}
-        {tags.length === 0 ? <span className="text-xs text-text-muted">No tags.</span> : null}
-      </div>
-      <form
-        className="mt-2 flex items-center gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const name = newTag.trim();
-          if (!name) return;
-          const existing = available.find(
-            (t) => t.name.toLowerCase() === name.toLowerCase() || t.slug === name.toLowerCase()
-          );
-          if (existing) {
-            attach.mutate({ ticketId, tagId: existing.id });
-          } else {
-            createTag.mutate(
-              { name },
-              {
-                onSuccess: (data) => attach.mutate({ ticketId, tagId: data.tag.id }),
-              }
+    <>
+      <section className="rounded-lg border border-border bg-surface p-3" data-testid="tags">
+        <h3 className="mb-2 text-xs font-semibold text-text-muted">Tags</h3>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <TagChip key={tag.id} tag={tag} onRemove={() => setTagToRemove(tag)} />
+          ))}
+          {tags.length === 0 ? <span className="text-xs text-text-muted">No tags.</span> : null}
+        </div>
+        <form
+          className="mt-2 flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const name = newTag.trim();
+            if (!name) return;
+            const existing = available.find(
+              (t) => t.name.toLowerCase() === name.toLowerCase() || t.slug === name.toLowerCase(),
             );
-          }
-          setNewTag('');
+            if (existing) {
+              attach.mutate({ ticketId, tagId: existing.id });
+            } else {
+              createTag.mutate(
+                { name },
+                {
+                  onSuccess: (data) => attach.mutate({ ticketId, tagId: data.tag.id }),
+                },
+              );
+            }
+            setNewTag('');
+          }}
+        >
+          <Input
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            placeholder="Add or create tag…"
+            className="h-7 w-40 text-xs"
+            data-testid="tag-input"
+          />
+          <Button type="submit" size="sm" variant="ghost" disabled={!newTag.trim()}>
+            <Plus size={12} />
+          </Button>
+        </form>
+      </section>
+      <ConfirmDialog
+        open={tagToRemove !== null}
+        onClose={() => setTagToRemove(null)}
+        onConfirm={async () => {
+          if (!tagToRemove) return;
+          await detach.mutateAsync({ ticketId, tagId: tagToRemove.id });
         }}
-      >
-        <Input
-          value={newTag}
-          onChange={(e) => setNewTag(e.target.value)}
-          placeholder="Add or create tag…"
-          className="h-7 w-40 text-xs"
-          data-testid="tag-input"
-        />
-        <Button type="submit" size="sm" variant="ghost" disabled={!newTag.trim()}>
-          <Plus size={12} />
-        </Button>
-      </form>
-    </section>
+        title="Remove tag?"
+        description={
+          <>
+            The <span className="font-medium text-text">{tagToRemove?.name}</span> tag will be
+            removed from this ticket. The tag will remain available in the project.
+          </>
+        }
+        confirmLabel="Remove tag"
+      />
+    </>
   );
 }
 
@@ -653,7 +802,10 @@ export function TicketDetailPage() {
   const { slug, ticketId } = useParams<{ slug: string; ticketId: string }>();
   const navigate = useNavigate();
   const projects = useProjects();
-  const project = useMemo(() => projects.data?.projects.find((p) => p.slug === slug), [projects.data, slug]);
+  const project = useMemo(
+    () => projects.data?.projects.find((p) => p.slug === slug),
+    [projects.data, slug],
+  );
   const detail = useTicket(ticketId);
   const patch = usePatchTicket(ticketId ?? '');
   const archive = useArchiveTicket();
@@ -661,8 +813,11 @@ export function TicketDetailPage() {
   const ticket = detail.data?.ticket;
   const [title, setTitle] = useState('');
   const [longs, setLongs] = useState<Record<string, string>>({});
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>(
+    'idle',
+  );
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const dirtyRef = useRef(false);
 
   // Hydrate local edit state when a fresh ticket arrives and we have no local edits.
@@ -675,15 +830,13 @@ export function TicketDetailPage() {
 
   const currentVersion = ticket?.version ?? 0;
 
-  const save = async (
-    extra?: {
-      status?: string;
-      priority?: string;
-      type?: string;
-      isBlocked?: boolean;
-      blockedReason?: string | null;
-    }
-  ) => {
+  const save = async (extra?: {
+    status?: string;
+    priority?: string;
+    type?: string;
+    isBlocked?: boolean;
+    blockedReason?: string | null;
+  }) => {
     if (!ticket) return;
     setSaveState('saving');
     setConflictMessage(null);
@@ -706,7 +859,7 @@ export function TicketDetailPage() {
       if (err instanceof ApiClientError && err.isStaleUpdate) {
         setSaveState('conflict');
         setConflictMessage(
-          'Newer version exists — this ticket was updated elsewhere. The latest server state has been loaded below; re-apply your edit.'
+          'Newer version exists — this ticket was updated elsewhere. The latest server state has been loaded below; re-apply your edit.',
         );
         // Refetch latest data; do not overwrite server state.
         await detail.refetch();
@@ -739,10 +892,16 @@ export function TicketDetailPage() {
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-6">
       <div className="mb-3 flex items-center gap-2">
-        <Link to={`/p/${project.slug}/board`} className="flex items-center gap-1 text-xs text-text-muted hover:text-text">
+        <Link
+          to={`/p/${project.slug}/board`}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text"
+        >
           <ArrowLeft size={13} /> Board
         </Link>
-        <Link to={`/p/${project.slug}/list`} className="flex items-center gap-1 text-xs text-text-muted hover:text-text">
+        <Link
+          to={`/p/${project.slug}/list`}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text"
+        >
           List
         </Link>
         <span className="ml-auto font-mono text-xs text-text-muted">{displayId}</span>
@@ -813,7 +972,11 @@ export function TicketDetailPage() {
 
         {/* Save bar */}
         <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
-          <Button onClick={() => void save()} disabled={saveState === 'saving'} data-testid="ticket-save">
+          <Button
+            onClick={() => void save()}
+            disabled={saveState === 'saving'}
+            data-testid="ticket-save"
+          >
             Save
           </Button>
           <span
@@ -842,11 +1005,21 @@ export function TicketDetailPage() {
 
           <div className="ml-auto flex items-center gap-1.5">
             {ticket.isBlocked ? (
-              <Button variant="secondary" size="sm" onClick={() => void toggleBlocked(false)} data-testid="ticket-unblock">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void toggleBlocked(false)}
+                data-testid="ticket-unblock"
+              >
                 Unblock
               </Button>
             ) : (
-              <Button variant="secondary" size="sm" onClick={() => void toggleBlocked(true)} data-testid="ticket-block">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void toggleBlocked(true)}
+                data-testid="ticket-block"
+              >
                 <ShieldAlert size={13} /> Block
               </Button>
             )}
@@ -854,7 +1027,7 @@ export function TicketDetailPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => archive.mutate({ ticketId: ticket.id, archived: false })}
+                onClick={() => archive.mutate({ ticketId: ticket.id, shouldArchive: false })}
                 data-testid="ticket-restore"
               >
                 <ArchiveRestore size={13} /> Restore
@@ -863,12 +1036,7 @@ export function TicketDetailPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  if (window.confirm('Archive this ticket? It will disappear from the board.')) {
-                    archive.mutate({ ticketId: ticket.id, archived: true });
-                    navigate(`/p/${project.slug}/board`);
-                  }
-                }}
+                onClick={() => setArchiveOpen(true)}
                 data-testid="ticket-archive"
               >
                 <Archive size={13} /> Archive
@@ -878,7 +1046,10 @@ export function TicketDetailPage() {
         </div>
 
         {ticket.isBlocked && ticket.blockedReason ? (
-          <div className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-2.5" data-testid="blocked-reason-box">
+          <div
+            className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-2.5"
+            data-testid="blocked-reason-box"
+          >
             <p className="text-xs font-semibold text-danger">Blocked</p>
             <p className="mt-0.5 text-sm">{ticket.blockedReason}</p>
           </div>
@@ -942,7 +1113,8 @@ export function TicketDetailPage() {
               ))}
             </dl>
             <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
-              Milestones record the first time a ticket reached each state and are never erased by moving backward.
+              Milestones record the first time a ticket reached each state and are never erased by
+              moving backward.
             </p>
           </section>
 
@@ -965,6 +1137,25 @@ export function TicketDetailPage() {
           </section>
         </div>
       </div>
+      <ConfirmDialog
+        open={archiveOpen}
+        onClose={() => setArchiveOpen(false)}
+        onConfirm={async () => {
+          await archive.mutateAsync({ ticketId: ticket.id, shouldArchive: true });
+          navigate(`/p/${project.slug}/board`);
+        }}
+        title="Archive ticket?"
+        description={
+          <>
+            <span className="font-medium text-text">
+              {displayId}: {ticket.title}
+            </span>{' '}
+            will be hidden from the active board and list. Its history will be preserved, and the
+            ticket can be restored later.
+          </>
+        }
+        confirmLabel="Archive ticket"
+      />
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
   PriorityBadge,
   Select,
   Spinner,
+  TagChip,
   TypeBadge,
 } from '@/components/ui';
 
@@ -282,7 +283,17 @@ export function ListPage() {
                   <td className="px-2 py-1.5">{t.isBlocked ? <BlockedBadge reason={t.blockedReason} /> : <span className="text-text-muted/40">—</span>}</td>
                   <td className="px-2 py-1.5"><PriorityBadge priority={t.priority} /></td>
                   <td className="px-2 py-1.5"><TypeBadge type={t.type} /></td>
-                  <td className="px-2 py-1.5 text-[10px] text-text-muted">{t.sourceReference ?? ''}</td>
+                  <td className="max-w-[160px] px-2 py-1.5">
+                    {(t.tags ?? []).length > 0 ? (
+                      <span className="flex flex-wrap gap-1">
+                        {(t.tags ?? []).map((tag) => (
+                          <TagChip key={tag.id} tag={tag} />
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="text-text-muted/40">—</span>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5 text-xs text-text-muted">{fmtDate(t.updatedAt)}</td>
                   <td className="px-2 py-1.5 text-xs text-text-muted">{fmtDate(t.deployedAt)}</td>
                 </tr>

@@ -1,8 +1,16 @@
-import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+} from '@tanstack/react-query';
 import type {
+  AccomplishmentsDto,
   BoardDto,
   ChecklistItemDto,
+  FocusDto,
   ProjectDto,
+  ProjectDashboardDto,
   TagDto,
   TicketDetailDto,
   TicketDto,
@@ -23,6 +31,9 @@ export const queryKeys = {
   ticket: (id: string) => ['ticket', id] as const,
   list: (projectId: string, filters: string) => ['list', projectId, filters] as const,
   projectTags: (projectId: string) => ['tags', projectId] as const,
+  dashboard: (projectId: string) => ['dashboard', projectId] as const,
+  focus: (projectId: string | null) => ['focus', projectId ?? 'global'] as const,
+  accomplishments: (projectId: string) => ['accomplishments', projectId] as const,
 };
 
 // --- auth ---
@@ -43,7 +54,11 @@ export function useMe() {
   });
 }
 
-export function useLogin(): UseMutationResult<{ user: UserDto }, Error, { email: string; password: string }> {
+export function useLogin(): UseMutationResult<
+  { user: UserDto },
+  Error,
+  { email: string; password: string }
+> {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input) => api.post('/api/auth/login', input),
@@ -100,7 +115,8 @@ export function useCreateProject() {
 export function useUpdateProject(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: unknown) => api.patch<{ project: ProjectDto }>(`/api/projects/${projectId}`, input),
+    mutationFn: (input: unknown) =>
+      api.patch<{ project: ProjectDto }>(`/api/projects/${projectId}`, input),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 }
@@ -108,8 +124,10 @@ export function useUpdateProject(projectId: string) {
 export function useArchiveProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, archived }: { projectId: string; archived: boolean }) =>
-      api.post<{ project: ProjectDto }>(`/api/projects/${projectId}/${archived ? 'unarchive' : 'archive'}`),
+    mutationFn: ({ projectId, shouldArchive }: { projectId: string; shouldArchive: boolean }) =>
+      api.post<{ project: ProjectDto }>(
+        `/api/projects/${projectId}/${shouldArchive ? 'archive' : 'unarchive'}`,
+      ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 }
@@ -132,7 +150,7 @@ export function filterKey(filters: TicketFilterParams): string {
 
 export function useTicketList(
   projectId: string | undefined,
-  filters: TicketFilterParams & { sortBy?: string; sortDir?: string }
+  filters: TicketFilterParams & { sortBy?: string; sortDir?: string },
 ) {
   const key = filterKey(filters);
   return useQuery({
@@ -198,8 +216,15 @@ export interface TicketPatch {
 export function useMoveTicket(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ ticketId, version, status }: { ticketId: string; version: number; status: string }) =>
-      api.patch<{ ticket: TicketDto }>(`/api/tickets/${ticketId}`, { version, status }),
+    mutationFn: ({
+      ticketId,
+      version,
+      status,
+    }: {
+      ticketId: string;
+      version: number;
+      status: string;
+    }) => api.patch<{ ticket: TicketDto }>(`/api/tickets/${ticketId}`, { version, status }),
     onMutate: async ({ ticketId, status }) => {
       const key = queryKeys.board(projectId);
       await qc.cancelQueries({ queryKey: key });
@@ -226,7 +251,7 @@ export function useMoveTicket(projectId: string) {
               columns: previous.board.columns.map((col) =>
                 col.status === status
                   ? { ...col, tickets: [{ ...moved, status }, ...col.tickets] }
-                  : col
+                  : col,
               ),
             },
           });
@@ -250,10 +275,13 @@ export function useMoveTicket(projectId: string) {
 export function usePatchTicket(ticketId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: TicketPatch) => api.patch<{ ticket: TicketDto }>(`/api/tickets/${ticketId}`, patch),
+    mutationFn: (patch: TicketPatch) =>
+      api.patch<{ ticket: TicketDto }>(`/api/tickets/${ticketId}`, patch),
     onSuccess: (data) => {
       qc.setQueryData<{ ticket: TicketDetailDto }>(queryKeys.ticket(ticketId), (current) =>
-        current ? { ticket: { ...current.ticket, ...data.ticket, activity: current.ticket.activity } } : current
+        current
+          ? { ticket: { ...current.ticket, ...data.ticket, activity: current.ticket.activity } }
+          : current,
       );
       void qc.invalidateQueries({ queryKey: ['board'] });
       void qc.invalidateQueries({ queryKey: ['list'] });
@@ -264,12 +292,54 @@ export function usePatchTicket(ticketId: string) {
 export function useArchiveTicket() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ ticketId, archived }: { ticketId: string; archived: boolean }) =>
-      api.post<{ ticket: TicketDto }>(`/api/tickets/${ticketId}/${archived ? 'restore' : 'archive'}`),
+    mutationFn: ({ ticketId, shouldArchive }: { ticketId: string; shouldArchive: boolean }) =>
+      api.post<{ ticket: TicketDto }>(
+        `/api/tickets/${ticketId}/${shouldArchive ? 'archive' : 'restore'}`,
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['board'] });
       void qc.invalidateQueries({ queryKey: ['ticket'] });
       void qc.invalidateQueries({ queryKey: ['list'] });
+    },
+  });
+}
+
+// --- insights (dashboard / focus / accomplishments) + direct lookup ---
+
+export function useDashboard(projectId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.dashboard(projectId ?? 'none'),
+    queryFn: () => api.get<ProjectDashboardDto>(`/api/projects/${projectId}/dashboard`),
+    enabled: projectId !== undefined,
+  });
+}
+
+export function useFocus(projectId: string | null | undefined) {
+  const global = projectId === null || projectId === undefined;
+  const suffix = global ? '' : `?projectId=${projectId}`;
+  return useQuery({
+    queryKey: queryKeys.focus(global ? null : projectId),
+    queryFn: () => api.get<FocusDto>(`/api/focus${suffix}`),
+  });
+}
+
+export function useAccomplishments(projectId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.accomplishments(projectId ?? 'none'),
+    queryFn: () => api.get<AccomplishmentsDto>(`/api/projects/${projectId}/accomplishments`),
+    enabled: projectId !== undefined,
+  });
+}
+
+export function useTicketByNumber(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ref: string) =>
+      api.get<{ ticket: TicketDto }>(
+        `/api/projects/${projectId}/tickets/by-number/${encodeURIComponent(ref)}`,
+      ),
+    onSuccess: (data) => {
+      qc.setQueryData(queryKeys.ticket(data.ticket.id), { ticket: data.ticket });
     },
   });
 }
@@ -305,7 +375,8 @@ export function useUpdateChecklistItem(projectId?: string) {
       ticketId: string;
       itemId: string;
       patch: { text?: string; completed?: boolean };
-    }) => api.patch<{ item: ChecklistItemDto }>(`/api/tickets/${ticketId}/checklist/${itemId}`, patch),
+    }) =>
+      api.patch<{ item: ChecklistItemDto }>(`/api/tickets/${ticketId}/checklist/${itemId}`, patch),
     onSuccess: invalidate,
   });
 }
@@ -331,9 +402,12 @@ export function useReorderChecklistItem(projectId?: string) {
       itemId: string;
       direction: 'up' | 'down';
     }) =>
-      api.post<{ items: ChecklistItemDto[] }>(`/api/tickets/${ticketId}/checklist/${itemId}/reorder`, {
-        direction,
-      }),
+      api.post<{ items: ChecklistItemDto[] }>(
+        `/api/tickets/${ticketId}/checklist/${itemId}/reorder`,
+        {
+          direction,
+        },
+      ),
     onSuccess: invalidate,
   });
 }
@@ -368,8 +442,13 @@ export function useDeleteLink(projectId?: string) {
 export function useAddRelation(projectId?: string) {
   const invalidate = useSubResourceInvalidation(projectId);
   return useMutation({
-    mutationFn: ({ ticketId, input }: { ticketId: string; input: { type: string; otherTicketId: string } }) =>
-      api.post<{ relations: TicketRelationDto[] }>(`/api/tickets/${ticketId}/relations`, input),
+    mutationFn: ({
+      ticketId,
+      input,
+    }: {
+      ticketId: string;
+      input: { type: string; otherTicketId: string };
+    }) => api.post<{ relations: TicketRelationDto[] }>(`/api/tickets/${ticketId}/relations`, input),
     onSuccess: invalidate,
   });
 }
