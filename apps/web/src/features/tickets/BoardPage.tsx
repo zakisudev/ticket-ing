@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   DndContext,
   DragOverlay,
@@ -15,7 +15,15 @@ import type { TicketDto } from '@zakisu-tickets/shared';
 import { useBoard, useCreateTicket, useMoveTicket, useProjects } from '@/api/hooks';
 import { ApiClientError } from '@/api/client';
 import { LAST_PROJECT_KEY } from '@/features/projects/HomePage';
-import { BlockedBadge, Button, Input, PriorityBadge, Spinner, TypeBadge } from '@/components/ui';
+import {
+  BlockedBadge,
+  Button,
+  Input,
+  LimitationsBadge,
+  PriorityBadge,
+  Spinner,
+  TypeBadge,
+} from '@/components/ui';
 import { useQuickCreateShortcut } from '@/features/tickets/KeyboardShortcuts';
 
 function Column({
@@ -33,15 +41,7 @@ function Column({
   return (
     <div className="flex w-64 shrink-0 flex-col">
       <div className="mb-2 flex items-center gap-2 px-1">
-        <span
-          className={
-            status === 'BLOCKED'
-              ? 'text-xs font-semibold uppercase tracking-wider text-danger'
-              : 'text-xs font-semibold uppercase tracking-wider text-text-muted'
-          }
-        >
-          {label}
-        </span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{label}</span>
         <span className="rounded bg-surface-2 px-1.5 text-[10px] text-text-muted">{tickets.length}</span>
       </div>
       <div
@@ -76,9 +76,10 @@ function BoardCard({ ticket, onOpenTicket }: { ticket: TicketDto; onOpenTicket: 
         </span>
       </div>
       <div className="mt-1.5 line-clamp-3 text-sm leading-snug">{ticket.title}</div>
-      {ticket.status === 'BLOCKED' && ticket.blockedReason ? (
-        <div className="mt-1.5">
-          <BlockedBadge />
+      {ticket.isBlocked || ticket.limitations ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          {ticket.isBlocked ? <BlockedBadge reason={ticket.blockedReason} /> : null}
+          {ticket.limitations ? <LimitationsBadge /> : null}
         </div>
       ) : null}
     </button>
@@ -155,6 +156,8 @@ function QuickCreate({ projectId, defaultStatus }: { projectId: string; defaultS
 
 export function BoardPage() {
   const { slug } = useParams<{ slug: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const blockedOnly = searchParams.get('blocked') === 'true';
   const projects = useProjects();
   const project = useMemo(
     () => projects.data?.projects.find((p) => p.slug === slug),
@@ -181,8 +184,13 @@ export function BoardPage() {
 
   const columns = useMemo(() => {
     if (!board.data) return [];
-    return board.data.board.columns;
-  }, [board.data]);
+    // Blocked-only quick filter: keep blocked cards, drop the rest.
+    if (!blockedOnly) return board.data.board.columns;
+    return board.data.board.columns.map((col) => ({
+      ...col,
+      tickets: col.tickets.filter((t) => t.isBlocked),
+    }));
+  }, [board.data, blockedOnly]);
 
   const onDragStart = (e: DragStartEvent) => {
     const ticketId = String(e.active.id);
@@ -235,6 +243,20 @@ export function BoardPage() {
             {moveError}
           </p>
         ) : null}
+        <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-[11px] text-text-muted">
+          <input
+            type="checkbox"
+            checked={blockedOnly}
+            onChange={(e) => {
+              const next = new URLSearchParams(searchParams);
+              if (e.target.checked) next.set('blocked', 'true');
+              else next.delete('blocked');
+              setSearchParams(next, { replace: true });
+            }}
+            data-testid="blocked-filter"
+          />
+          Blocked only
+        </label>
       </header>
 
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>

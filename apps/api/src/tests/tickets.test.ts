@@ -126,27 +126,40 @@ describe('status transitions and milestone timestamps', () => {
     expect(statusEvents[2].metadata).toEqual({ from: 'PLANNED', to: 'DEPLOYED' });
   });
 
-  it('BLOCKED requires a reason', async () => {
+  it('blocking requires a reason and preserves lifecycle status (orthogonal condition)', async () => {
     const { agent, project } = await setupProject();
     const t = await createTicket(agent, project.id, 'Blocked test');
-    const noReason = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, status: 'BLOCKED' });
+
+    // Blocking without a reason is rejected.
+    const noReason = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, isBlocked: true });
     expect(noReason.status).toBe(422);
 
-    const emptyReason = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, status: 'BLOCKED', blockedReason: '   ' });
+    // Whitespace-only reason is rejected.
+    const emptyReason = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, isBlocked: true, blockedReason: '   ' });
     expect(emptyReason.status).toBe(422);
 
-    const blocked = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, status: 'BLOCKED', blockedReason: 'waiting on upstream fix' });
+    // Blocking never touches lifecycle status.
+    const blocked = await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, isBlocked: true, blockedReason: 'waiting on upstream fix' });
     expect(blocked.status).toBe(200);
-    expect(blocked.body.ticket.status).toBe('BLOCKED');
+    expect(blocked.body.ticket.status).toBe('PLANNED');
+    expect(blocked.body.ticket.isBlocked).toBe(true);
     expect(blocked.body.ticket.blockedReason).toBe('waiting on upstream fix');
+
+    // Blocking works in every lifecycle state, e.g. IMPLEMENTED + blocked.
+    const v = blocked.body.ticket.version;
+    const impl = await agent.patch(`/api/tickets/${t.id}`).send({ version: v, status: 'IMPLEMENTED' });
+    expect(impl.body.ticket.status).toBe('IMPLEMENTED');
+    expect(impl.body.ticket.isBlocked).toBe(true);
   });
 
   it('unblocking clears the live reason but preserves it in activity', async () => {
     const { agent, project } = await setupProject();
     const t = await createTicket(agent, project.id, 'Unblock test');
-    await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, status: 'BLOCKED', blockedReason: 'waiting on OPS3B' });
-    const unblocked = await agent.patch(`/api/tickets/${t.id}`).send({ version: 2, status: 'PLANNED' });
+    await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, isBlocked: true, blockedReason: 'waiting on OPS3B' });
+    const unblocked = await agent.patch(`/api/tickets/${t.id}`).send({ version: 2, isBlocked: false });
     expect(unblocked.status).toBe(200);
+    expect(unblocked.body.ticket.status).toBe('PLANNED');
+    expect(unblocked.body.ticket.isBlocked).toBe(false);
     expect(unblocked.body.ticket.blockedReason).toBeNull();
     const detail = await agent.get(`/api/tickets/${t.id}`);
     const unblockEvents = detail.body.ticket.activity.filter((a: { type: string }) => a.type === 'UNBLOCKED');
@@ -238,7 +251,7 @@ describe('optimistic concurrency', () => {
 });
 
 describe('board', () => {
-  it('returns five workflow columns plus a distinct blocked column, with archived excluded', async () => {
+  it('returns exactly the five lifecycle columns, with archived excluded', async () => {
     const { agent, project } = await setupProject();
     const planned = await createTicket(agent, project.id, 'Planned one');
     const inprog = await createTicket(agent, project.id, 'In progress one');
@@ -258,7 +271,6 @@ describe('board', () => {
       'IMPLEMENTED',
       'TESTED',
       'DEPLOYED',
-      'BLOCKED',
     ]);
     const plannedCol = board.columns[0].tickets;
     expect(plannedCol.some((x: { id: string }) => x.id === planned.id)).toBe(true);
@@ -267,18 +279,27 @@ describe('board', () => {
     expect(board.columns[4].tickets).toHaveLength(1);
   });
 
-  it('shows blocked tickets in the distinct BLOCKED column with reason', async () => {
+  it('blocked tickets stay in their lifecycle column with the blocked reason', async () => {
     const { agent, project } = await setupProject();
     const t = await createTicket(agent, project.id, 'Blocked on board');
-    await agent.patch(`/api/tickets/${t.id}`).send({ version: 1, status: 'BLOCKED', blockedReason: 'needs decision' });
+    const blocked = await agent
+      .patch(`/api/tickets/${t.id}`)
+      .send({ version: 1, isBlocked: true, blockedReason: 'needs decision', status: 'IN_PROGRESS' });
+    expect(blocked.body.ticket.isBlocked).toBe(true);
     const res = await agent.get(`/api/projects/${project.id}/tickets/board`);
-    const blockedCol = res.body.board.columns[5];
-    expect(blockedCol.status).toBe('BLOCKED');
-    const blocked = blockedCol.tickets.find((x: { id: string }) => x.id === t.id);
-    expect(blocked).toBeDefined();
-    expect(blocked.blockedReason).toBe('needs decision');
-    // Not mixed into PLANNED.
-    expect(res.body.board.columns[0].tickets.some((x: { id: string }) => x.id === t.id)).toBe(false);
+    const board = res.body.board;
+    // The blocked card remains in its lifecycle column (IN_PROGRESS here).
+    const inProgressCol = board.columns[1];
+    expect(inProgressCol.status).toBe('IN_PROGRESS');
+    const blockedCard = inProgressCol.tickets.find((x: { id: string }) => x.id === t.id);
+    expect(blockedCard).toBeDefined();
+    expect(blockedCard.isBlocked).toBe(true);
+    expect(blockedCard.blockedReason).toBe('needs decision');
+    // It is not in any other column.
+    const otherCols = board.columns.filter((c: { status: string }) => c.status !== 'IN_PROGRESS');
+    for (const col of otherCols) {
+      expect(col.tickets.some((x: { id: string }) => x.id === t.id)).toBe(false);
+    }
   });
 });
 

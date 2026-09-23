@@ -1,9 +1,15 @@
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
 import type {
   BoardDto,
+  ChecklistItemDto,
   ProjectDto,
+  TagDto,
   TicketDetailDto,
   TicketDto,
+  TicketFilterParams,
+  TicketLinkDto,
+  TicketListDto,
+  TicketRelationDto,
   UserDto,
 } from '@zakisu-tickets/shared';
 import { api } from './client';
@@ -15,6 +21,8 @@ export const queryKeys = {
   project: (id: string) => ['project', id] as const,
   board: (projectId: string) => ['board', projectId] as const,
   ticket: (id: string) => ['ticket', id] as const,
+  list: (projectId: string, filters: string) => ['list', projectId, filters] as const,
+  projectTags: (projectId: string) => ['tags', projectId] as const,
 };
 
 // --- auth ---
@@ -116,6 +124,30 @@ export function useBoard(projectId: string | undefined) {
   });
 }
 
+/** Stable cache key fragment for the current filter set. */
+export function filterKey(filters: TicketFilterParams): string {
+  const entries = Object.entries(filters).filter(([, v]) => v !== undefined && v !== '');
+  return entries.length === 0 ? 'all' : JSON.stringify(Object.fromEntries(entries));
+}
+
+export function useTicketList(
+  projectId: string | undefined,
+  filters: TicketFilterParams & { sortBy?: string; sortDir?: string }
+) {
+  const key = filterKey(filters);
+  return useQuery({
+    queryKey: queryKeys.list(projectId ?? 'none', key),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(filters)) {
+        if (v !== undefined && v !== '') params.set(k, String(v));
+      }
+      return api.get<TicketListDto>(`/api/projects/${projectId}/tickets?${params.toString()}`);
+    },
+    enabled: projectId !== undefined,
+  });
+}
+
 export function useTicket(ticketId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.ticket(ticketId ?? 'none'),
@@ -131,6 +163,7 @@ export function useCreateTicket(projectId: string) {
       api.post<{ ticket: TicketDto }>(`/api/projects/${projectId}/tickets`, input),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
+      void qc.invalidateQueries({ queryKey: ['list'] });
       void qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
@@ -153,7 +186,9 @@ export interface TicketPatch {
   status?: string;
   priority?: string;
   type?: string;
+  isBlocked?: boolean;
   blockedReason?: string | null;
+  archived?: boolean;
 }
 
 /**
@@ -206,6 +241,7 @@ export function useMoveTicket(projectId: string) {
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
+      void qc.invalidateQueries({ queryKey: ['list'] });
       void qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
@@ -220,6 +256,7 @@ export function usePatchTicket(ticketId: string) {
         current ? { ticket: { ...current.ticket, ...data.ticket, activity: current.ticket.activity } } : current
       );
       void qc.invalidateQueries({ queryKey: ['board'] });
+      void qc.invalidateQueries({ queryKey: ['list'] });
     },
   });
 }
@@ -232,6 +269,156 @@ export function useArchiveTicket() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['board'] });
       void qc.invalidateQueries({ queryKey: ['ticket'] });
+      void qc.invalidateQueries({ queryKey: ['list'] });
     },
+  });
+}
+
+// --- checklist ---
+
+function useSubResourceInvalidation(projectId?: string) {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['ticket'] });
+    void qc.invalidateQueries({ queryKey: ['list'] });
+    if (projectId) void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
+  };
+}
+
+export function useAddChecklistItem(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, text }: { ticketId: string; text: string }) =>
+      api.post<{ item: ChecklistItemDto }>(`/api/tickets/${ticketId}/checklist`, { text }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateChecklistItem(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({
+      ticketId,
+      itemId,
+      patch,
+    }: {
+      ticketId: string;
+      itemId: string;
+      patch: { text?: string; completed?: boolean };
+    }) => api.patch<{ item: ChecklistItemDto }>(`/api/tickets/${ticketId}/checklist/${itemId}`, patch),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteChecklistItem(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, itemId }: { ticketId: string; itemId: string }) =>
+      api.delete<void>(`/api/tickets/${ticketId}/checklist/${itemId}`),
+    onSuccess: invalidate,
+  });
+}
+
+export function useReorderChecklistItem(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({
+      ticketId,
+      itemId,
+      direction,
+    }: {
+      ticketId: string;
+      itemId: string;
+      direction: 'up' | 'down';
+    }) =>
+      api.post<{ items: ChecklistItemDto[] }>(`/api/tickets/${ticketId}/checklist/${itemId}/reorder`, {
+        direction,
+      }),
+    onSuccess: invalidate,
+  });
+}
+
+// --- links ---
+
+export function useAddLink(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({
+      ticketId,
+      input,
+    }: {
+      ticketId: string;
+      input: { type: string; label?: string | null; url: string };
+    }) => api.post<{ link: TicketLinkDto }>(`/api/tickets/${ticketId}/links`, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteLink(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, linkId }: { ticketId: string; linkId: string }) =>
+      api.delete<void>(`/api/tickets/${ticketId}/links/${linkId}`),
+    onSuccess: invalidate,
+  });
+}
+
+// --- relations ---
+
+export function useAddRelation(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, input }: { ticketId: string; input: { type: string; otherTicketId: string } }) =>
+      api.post<{ relations: TicketRelationDto[] }>(`/api/tickets/${ticketId}/relations`, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteRelation(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, relationId }: { ticketId: string; relationId: string }) =>
+      api.delete<void>(`/api/tickets/${ticketId}/relations/${relationId}`),
+    onSuccess: invalidate,
+  });
+}
+
+// --- tags ---
+
+export function useProjectTags(projectId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.projectTags(projectId ?? 'none'),
+    queryFn: () => api.get<{ tags: TagDto[] }>(`/api/projects/${projectId}/tags`),
+    enabled: projectId !== undefined,
+  });
+}
+
+export function useCreateTag(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; color?: string | null }) =>
+      api.post<{ tag: TagDto }>(`/api/projects/${projectId}/tags`, input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.projectTags(projectId) });
+      void qc.invalidateQueries({ queryKey: ['ticket'] });
+    },
+  });
+}
+
+export function useAttachTag(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, tagId }: { ticketId: string; tagId: string }) =>
+      api.post<{ tags: TagDto[] }>(`/api/tickets/${ticketId}/tags`, { tagId }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDetachTag(projectId?: string) {
+  const invalidate = useSubResourceInvalidation(projectId);
+  return useMutation({
+    mutationFn: ({ ticketId, tagId }: { ticketId: string; tagId: string }) =>
+      api.delete<{ tags: TagDto[] }>(`/api/tickets/${ticketId}/tags/${tagId}`),
+    onSuccess: invalidate,
   });
 }

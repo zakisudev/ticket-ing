@@ -1,7 +1,7 @@
 import { clsx } from 'clsx';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { X } from 'lucide-react';
-import type { TicketPriority, TicketStatus, TicketType } from '@zakisu-tickets/shared';
+import type { TagDto, TicketPriority, TicketStatus, TicketType } from '@zakisu-tickets/shared';
 
 export function Button({ className, variant = 'primary', size = 'md', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -97,10 +97,48 @@ export function TypeBadge({ type }: { type: TicketType }) {
   );
 }
 
-export function BlockedBadge() {
+export function BlockedBadge({ reason }: { reason?: string | null }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+    <span
+      className="inline-flex items-center gap-1 rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger"
+      title={reason ?? undefined}
+      data-testid={reason !== undefined ? 'blocked-badge' : undefined}
+    >
       BLOCKED
+    </span>
+  );
+}
+
+/** Subtle shipped-with-caveats indicator — noticeable, not alarming like BLOCKED. */
+export function LimitationsBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning"
+      title="This ticket has recorded limitations"
+      data-testid="limitations-badge"
+    >
+      LIMITATIONS
+    </span>
+  );
+}
+
+export function TagChip({ tag, onRemove }: { tag: TagDto; onRemove?: () => void }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+      style={{
+        backgroundColor: tag.color ? `${tag.color}22` : undefined,
+        color: tag.color ?? 'var(--color-text-muted)',
+        border: tag.color ? `1px solid ${tag.color}55` : '1px solid var(--color-border)',
+      }}
+      data-testid={`tag-${tag.slug}`}
+    >
+      {tag.name}
+      {onRemove ? (
+        <button type="button" onClick={onRemove} className="ml-0.5 opacity-60 hover:opacity-100" aria-label={`Remove tag ${tag.name}`}>
+          <X size={9} />
+        </button>
+      ) : null}
     </span>
   );
 }

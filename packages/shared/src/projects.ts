@@ -66,3 +66,18 @@ export function slugify(input: string): string {
     .slice(0, 80);
   return slug.length > 0 ? slug : 'project';
 }
+
+/**
+ * Tag slug: lowercase, hyphen/underscore separated, unique per project.
+ * Used for URL filter params (`?tag=historical`) and Phase 4 import matching.
+ */
+export function tagSlugify(input: string): string {
+  const slug = input
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return slug.length > 0 ? slug : 'tag';
+}

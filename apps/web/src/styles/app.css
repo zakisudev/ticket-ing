@@ -72,3 +72,24 @@ body {
   background: var(--color-border);
   border-radius: 8px;
 }
+
+/* Minimal typography for sanitized Markdown output (no raw HTML is allowed). */
+.prose-zt h1, .prose-zt h2, .prose-zt h3 { font-weight: 600; margin: 0.6em 0 0.3em; line-height: 1.3; }
+.prose-zt h1 { font-size: 1.05rem; }
+.prose-zt h2 { font-size: 1rem; }
+.prose-zt h3 { font-size: 0.92rem; }
+.prose-zt p { margin: 0.35em 0; }
+.prose-zt ul, .prose-zt ol { margin: 0.35em 0; padding-left: 1.4em; }
+.prose-zt ul { list-style: disc; }
+.prose-zt ol { list-style: decimal; }
+.prose-zt li { margin: 0.15em 0; }
+.prose-zt code { font-family: ui-monospace, monospace; font-size: 0.85em; background: var(--color-surface-2); border-radius: 4px; padding: 0.1em 0.3em; }
+.prose-zt pre { background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 6px; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
+.prose-zt pre code { background: transparent; padding: 0; }
+.prose-zt blockquote { border-left: 3px solid var(--color-border); padding-left: 0.8em; color: var(--color-text-muted); margin: 0.5em 0; }
+.prose-zt a { color: var(--color-accent); text-decoration: underline; }
+.prose-zt table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; }
+.prose-zt th, .prose-zt td { border: 1px solid var(--color-border); padding: 0.25em 0.6em; text-align: left; }
+.prose-zt th { background: var(--color-surface-2); }
+.prose-zt hr { border: 0; border-top: 1px solid var(--color-border); margin: 0.8em 0; }
+.prose-zt input[type="checkbox"] { margin-right: 0.4em; }
