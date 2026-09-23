@@ -1,5 +1,17 @@
 import { Router } from 'express';
-import { createTicketSchema, updateTicketSchema } from '@zakisu-tickets/shared';
+import {
+  attachTagSchema,
+  createChecklistItemSchema,
+  createLinkSchema,
+  createRelationSchema,
+  createTagSchema,
+  createTicketSchema,
+  updateChecklistItemSchema,
+  updateTicketSchema,
+  ticketFilterParamsSchema,
+  listSortFieldsSchema,
+} from '@zakisu-tickets/shared';
+import { z } from 'zod';
 import { ApiError } from '../../lib/errors.js';
 import { requireAuth } from '../auth/sessions.js';
 import {
@@ -8,12 +20,24 @@ import {
   getTicketDetail,
   setTicketArchived,
   updateTicket,
+  searchTickets,
 } from './tickets.service.js';
+import {
+  addChecklistItem,
+  deleteChecklistItem,
+  listChecklist,
+  reorderChecklistItem,
+  updateChecklistItem,
+} from './checklist.service.js';
+import { addLink, deleteLink, listLinks } from './links.service.js';
+import { addRelation, deleteRelation, listRelations } from './relations.service.js';
+import { attachTag, createTag, deleteTag, detachTag, listProjectTags, listTicketTags } from './tags.service.js';
 
 export const ticketsRouter = Router();
 export const projectTicketsRouter = Router();
 
 projectTicketsRouter.use(requireAuth);
+ticketsRouter.use(requireAuth);
 
 function requireTicketId(req: { params: Record<string, string> }): string {
   const id = req.params.ticketId;
@@ -27,6 +51,15 @@ function requireProjectIdParam(req: { params: Record<string, string> }): string 
   return id;
 }
 
+function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw ApiError.validation('Invalid payload', parsed.error.flatten());
+  }
+  return parsed.data;
+}
+
+// ------------------------------------------------------- project endpoints
 // GET /api/projects/:projectId/tickets/board
 projectTicketsRouter.get('/:projectId/tickets/board', async (req, res, next) => {
   try {
@@ -37,22 +70,78 @@ projectTicketsRouter.get('/:projectId/tickets/board', async (req, res, next) => 
   }
 });
 
+// GET /api/projects/:projectId/tickets — filtered list view
+projectTicketsRouter.get('/:projectId/tickets', async (req, res, next) => {
+  try {
+    const filters = parseBody(ticketFilterParamsSchema, req.query);
+    const sort = parseBody(
+      z.object({ sortBy: listSortFieldsSchema.optional(), sortDir: z.enum(['asc', 'desc']).optional() }),
+      req.query
+    );
+    const list = await searchTickets(requireProjectIdParam(req), req.user!.id, filters, {
+      sortBy: sort.sortBy ?? 'ticketNumber',
+      sortDir: sort.sortDir ?? 'asc',
+    });
+    res.json(list);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/projects/:projectId/tickets — quick create
 projectTicketsRouter.post('/:projectId/tickets', async (req, res, next) => {
   try {
-    const parsed = createTicketSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw ApiError.validation('Invalid ticket payload', parsed.error.flatten());
-    }
-    const ticket = await createTicket(requireProjectIdParam(req), req.user!.id, parsed.data);
+    const input = parseBody(createTicketSchema, req.body);
+    const ticket = await createTicket(requireProjectIdParam(req), req.user!.id, input);
     res.status(201).json({ ticket });
   } catch (err) {
     next(err);
   }
 });
 
-ticketsRouter.use(requireAuth);
+// GET /api/projects/:projectId/search?q=... — search within project
+projectTicketsRouter.get('/:projectId/search', async (req, res, next) => {
+  try {
+    const q = parseBody(z.object({ q: z.string().min(1).max(200) }), req.query).q;
+    const results = await searchTickets(requireProjectIdParam(req), req.user!.id, { q });
+    res.json(results);
+  } catch (err) {
+    next(err);
+  }
+});
 
+// GET /api/projects/:projectId/tags
+projectTicketsRouter.get('/:projectId/tags', async (req, res, next) => {
+  try {
+    const tags = await listProjectTags(requireProjectIdParam(req), req.user!.id);
+    res.json({ tags });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/projects/:projectId/tags
+projectTicketsRouter.post('/:projectId/tags', async (req, res, next) => {
+  try {
+    const input = parseBody(createTagSchema, req.body);
+    const tag = await createTag(requireProjectIdParam(req), req.user!.id, input);
+    res.status(201).json({ tag });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/projects/:projectId/tags/:tagId
+projectTicketsRouter.delete('/:projectId/tags/:tagId', async (req, res, next) => {
+  try {
+    await deleteTag(requireProjectIdParam(req), req.params.tagId, req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ------------------------------------------------------- ticket endpoints
 ticketsRouter.get('/:ticketId', async (req, res, next) => {
   try {
     const ticket = await getTicketDetail(requireTicketId(req), req.user!.id);
@@ -64,11 +153,8 @@ ticketsRouter.get('/:ticketId', async (req, res, next) => {
 
 ticketsRouter.patch('/:ticketId', async (req, res, next) => {
   try {
-    const parsed = updateTicketSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw ApiError.validation('Invalid ticket payload', parsed.error.flatten());
-    }
-    const ticket = await updateTicket(requireTicketId(req), req.user!.id, parsed.data);
+    const input = parseBody(updateTicketSchema, req.body);
+    const ticket = await updateTicket(requireTicketId(req), req.user!.id, input);
     res.json({ ticket });
   } catch (err) {
     next(err);
@@ -88,6 +174,142 @@ ticketsRouter.post('/:ticketId/restore', async (req, res, next) => {
   try {
     const ticket = await setTicketArchived(requireTicketId(req), req.user!.id, false);
     res.json({ ticket });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------- checklist
+ticketsRouter.get('/:ticketId/checklist', async (req, res, next) => {
+  try {
+    const items = await listChecklist(requireTicketId(req), req.user!.id);
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.post('/:ticketId/checklist', async (req, res, next) => {
+  try {
+    const input = parseBody(createChecklistItemSchema, req.body);
+    const item = await addChecklistItem(requireTicketId(req), req.user!.id, input);
+    res.status(201).json({ item });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.patch('/:ticketId/checklist/:itemId', async (req, res, next) => {
+  try {
+    const input = parseBody(updateChecklistItemSchema, req.body);
+    const item = await updateChecklistItem(requireTicketId(req), req.params.itemId, req.user!.id, input);
+    res.json({ item });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.post('/:ticketId/checklist/:itemId/reorder', async (req, res, next) => {
+  try {
+    const input = parseBody(z.object({ direction: z.enum(['up', 'down']) }), req.body);
+    const items = await reorderChecklistItem(requireTicketId(req), req.params.itemId, req.user!.id, input);
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.delete('/:ticketId/checklist/:itemId', async (req, res, next) => {
+  try {
+    await deleteChecklistItem(requireTicketId(req), req.params.itemId, req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------- links
+ticketsRouter.get('/:ticketId/links', async (req, res, next) => {
+  try {
+    const links = await listLinks(requireTicketId(req), req.user!.id);
+    res.json({ links });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.post('/:ticketId/links', async (req, res, next) => {
+  try {
+    const input = parseBody(createLinkSchema, req.body);
+    const link = await addLink(requireTicketId(req), req.user!.id, input);
+    res.status(201).json({ link });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.delete('/:ticketId/links/:linkId', async (req, res, next) => {
+  try {
+    await deleteLink(requireTicketId(req), req.params.linkId, req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------- relations
+ticketsRouter.get('/:ticketId/relations', async (req, res, next) => {
+  try {
+    const relations = await listRelations(requireTicketId(req), req.user!.id);
+    res.json({ relations });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.post('/:ticketId/relations', async (req, res, next) => {
+  try {
+    const input = parseBody(createRelationSchema, req.body);
+    const relations = await addRelation(requireTicketId(req), req.user!.id, input);
+    res.status(201).json({ relations });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.delete('/:ticketId/relations/:relationId', async (req, res, next) => {
+  try {
+    await deleteRelation(requireTicketId(req), req.params.relationId, req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------- tags
+ticketsRouter.get('/:ticketId/tags', async (req, res, next) => {
+  try {
+    const tags = await listTicketTags(requireTicketId(req), req.user!.id);
+    res.json({ tags });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.post('/:ticketId/tags', async (req, res, next) => {
+  try {
+    const input = parseBody(attachTagSchema, req.body);
+    const tags = await attachTag(requireTicketId(req), req.user!.id, input.tagId);
+    res.json({ tags });
+  } catch (err) {
+    next(err);
+  }
+});
+
+ticketsRouter.delete('/:ticketId/tags/:tagId', async (req, res, next) => {
+  try {
+    const tags = await detachTag(requireTicketId(req), req.user!.id, req.params.tagId);
+    res.json({ tags });
   } catch (err) {
     next(err);
   }
