@@ -2,6 +2,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
 } from '@tanstack/react-query';
 import type {
@@ -35,6 +36,17 @@ export const queryKeys = {
   focus: (projectId: string | null) => ['focus', projectId ?? 'global'] as const,
   accomplishments: (projectId: string) => ['accomplishments', projectId] as const,
 };
+
+/** Refresh every materialized view whose contents or counts depend on a ticket. */
+function invalidateTicketViews(qc: QueryClient, projectId: string): void {
+  void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
+  void qc.invalidateQueries({ queryKey: ['list', projectId] });
+  void qc.invalidateQueries({ queryKey: ['projects'] });
+  void qc.invalidateQueries({ queryKey: queryKeys.dashboard(projectId) });
+  // A mutation can affect both the project-specific and global Focus views.
+  void qc.invalidateQueries({ queryKey: ['focus'] });
+  void qc.invalidateQueries({ queryKey: queryKeys.accomplishments(projectId) });
+}
 
 // --- auth ---
 
@@ -179,11 +191,7 @@ export function useCreateTicket(projectId: string) {
   return useMutation({
     mutationFn: (input: { title: string; status?: string; priority?: string; type?: string }) =>
       api.post<{ ticket: TicketDto }>(`/api/projects/${projectId}/tickets`, input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
-      void qc.invalidateQueries({ queryKey: ['list'] });
-      void qc.invalidateQueries({ queryKey: ['projects'] });
-    },
+    onSuccess: (data) => invalidateTicketViews(qc, data.ticket.projectId),
   });
 }
 
@@ -264,11 +272,7 @@ export function useMoveTicket(projectId: string) {
         qc.setQueryData(queryKeys.board(projectId), context.previous);
       }
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.board(projectId) });
-      void qc.invalidateQueries({ queryKey: ['list'] });
-      void qc.invalidateQueries({ queryKey: ['projects'] });
-    },
+    onSettled: () => invalidateTicketViews(qc, projectId),
   });
 }
 
@@ -283,8 +287,7 @@ export function usePatchTicket(ticketId: string) {
           ? { ticket: { ...current.ticket, ...data.ticket, activity: current.ticket.activity } }
           : current,
       );
-      void qc.invalidateQueries({ queryKey: ['board'] });
-      void qc.invalidateQueries({ queryKey: ['list'] });
+      invalidateTicketViews(qc, data.ticket.projectId);
     },
   });
 }
@@ -296,10 +299,9 @@ export function useArchiveTicket() {
       api.post<{ ticket: TicketDto }>(
         `/api/tickets/${ticketId}/${shouldArchive ? 'archive' : 'restore'}`,
       ),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['board'] });
+    onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ['ticket'] });
-      void qc.invalidateQueries({ queryKey: ['list'] });
+      invalidateTicketViews(qc, data.ticket.projectId);
     },
   });
 }

@@ -26,12 +26,15 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   try {
     res = await fetch(url, {
       method,
+      cache: method === 'GET' ? 'no-store' : undefined,
       credentials: 'include',
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new ApiClientError(0, { error: { code: 'INTERNAL_ERROR', message: 'Network error — check your connection' } });
+    throw new ApiClientError(0, {
+      error: { code: 'INTERNAL_ERROR', message: 'Network error — check your connection' },
+    });
   }
 
   if (res.status === 204) return undefined as T;
@@ -44,7 +47,11 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   }
 
   if (!res.ok) {
-    if (res.status === 401 && !url.startsWith('/api/auth/login') && !url.startsWith('/api/auth/register')) {
+    if (
+      res.status === 401 &&
+      !url.startsWith('/api/auth/login') &&
+      !url.startsWith('/api/auth/register')
+    ) {
       // Session expired: let the router react via the auth context listeners.
       window.dispatchEvent(new CustomEvent('zt:session-expired'));
     }

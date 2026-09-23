@@ -74,6 +74,11 @@ curl -s https://tickets.zakisu.com/health          # {"ok":true,...}
 curl -s https://tickets.zakisu.com/health/ready    # {"ok":true,"database":"up"}
 ```
 
+Dynamic `/api/*` and health responses explicitly use `Cache-Control: no-store`
+so browser, Passenger, and LiteSpeed caches cannot retain authentication or
+database state. Fingerprinted `/assets/*` files retain long-lived caching, while
+the SPA `index.html` uses `no-cache` so deployments are discovered promptly.
+
 For a new empty database, open `/register` immediately and create the first owner.
 Registration closes automatically after that account exists; then sign out and
 back in once to verify the complete authentication flow.

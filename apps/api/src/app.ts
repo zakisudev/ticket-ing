@@ -23,6 +23,20 @@ export function createApp(): Express {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
 
+  // Dynamic responses must never be stored by browsers or shared caches. This
+  // explicit policy also overrides hosting layers that add default cache TTLs.
+  app.use((req, res, next) => {
+    const isApi = req.path === '/api' || req.path.startsWith('/api/');
+    const isHealth = req.path === '/health' || req.path === '/health/ready';
+    if (isApi || isHealth) {
+      res.setHeader('Cache-Control', 'no-store, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      if (isApi) res.vary('Cookie');
+    }
+    next();
+  });
+
   const [helmetMw, cspMw, corsMw, originCheck] = buildSecurityMiddleware();
   app.use(helmetMw);
   app.use(cspMw);
@@ -63,15 +77,22 @@ export function createApp(): Express {
   const indexHtml = join(webDist, 'index.html');
 
   if (existsSync(indexHtml)) {
-    app.use(express.static(webDist, { index: false, maxAge: '1y', setHeaders: (res, path) => {
-      if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
-    }}));
+    app.use(
+      express.static(webDist, {
+        index: false,
+        maxAge: '1y',
+        setHeaders: (res, path) => {
+          if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+        },
+      }),
+    );
     // SPA fallback for client-side routes (excluding /api and /health).
     // Pattern-less middleware: Express 5 path-to-regexp no longer accepts '*'.
     app.use((req, res, next) => {
       if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/health')) {
         return next();
       }
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(indexHtml);
     });
   }
