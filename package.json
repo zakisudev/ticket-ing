@@ -21,12 +21,14 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "npm run test -w packages/shared --if-present && npm run test -w apps/api && npm run test -w apps/web",
+    "test:e2e": "playwright test",
     "db:generate": "npm run db:generate -w apps/api",
     "db:migrate": "npm run db:migrate -w apps/api",
     "db:migrate:prod": "npm run db:migrate:prod -w apps/api"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "^1.63.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.36.0",
     "eslint-config-prettier": "^10.1.8",

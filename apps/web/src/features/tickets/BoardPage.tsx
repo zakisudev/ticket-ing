@@ -6,6 +6,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDraggable,
   useDroppable,
   type DragEndEvent,
   type DragStartEvent,
@@ -26,6 +27,13 @@ import {
 } from '@/components/ui';
 import { useQuickCreateShortcut } from '@/features/tickets/KeyboardShortcuts';
 
+const TICKET_DND_PREFIX = 'ticket:';
+
+function ticketIdFromDndId(id: string | number): string | null {
+  const value = String(id);
+  return value.startsWith(TICKET_DND_PREFIX) ? value.slice(TICKET_DND_PREFIX.length) : null;
+}
+
 function Column({
   status,
   label,
@@ -41,8 +49,12 @@ function Column({
   return (
     <div className="flex w-64 shrink-0 flex-col">
       <div className="mb-2 flex items-center gap-2 px-1">
-        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{label}</span>
-        <span className="rounded bg-surface-2 px-1.5 text-[10px] text-text-muted">{tickets.length}</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+          {label}
+        </span>
+        <span className="rounded bg-surface-2 px-1.5 text-[10px] text-text-muted">
+          {tickets.length}
+        </span>
       </div>
       <div
         ref={setNodeRef}
@@ -60,13 +72,35 @@ function Column({
   );
 }
 
-function BoardCard({ ticket, onOpenTicket }: { ticket: TicketDto; onOpenTicket: (t: TicketDto) => void }) {
+function BoardCard({
+  ticket,
+  onOpenTicket,
+}: {
+  ticket: TicketDto;
+  onOpenTicket: (t: TicketDto) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${TICKET_DND_PREFIX}${ticket.id}`,
+  });
+
   return (
     <button
+      ref={setNodeRef}
       type="button"
-      className="cursor-grab rounded-md border border-border bg-surface p-2.5 text-left shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
-      onClick={() => onOpenTicket(ticket)}
+      className={
+        'cursor-grab rounded-md border border-border bg-surface p-2.5 text-left shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing ' +
+        (isDragging ? 'opacity-40' : '')
+      }
+      onClick={(event) => {
+        if (isDragging) {
+          event.preventDefault();
+          return;
+        }
+        onOpenTicket(ticket);
+      }}
       data-testid={`ticket-card-${ticket.displayId}`}
+      {...listeners}
+      {...attributes}
     >
       <div className="flex items-center gap-1.5">
         <span className="font-mono text-[10px] text-text-muted">{ticket.displayId}</span>
@@ -106,7 +140,13 @@ function QuickCreate({ projectId, defaultStatus }: { projectId: string; defaultS
 
   if (!open) {
     return (
-      <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => setOpen(true)} data-testid="quick-create-open">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-full justify-start"
+        onClick={() => setOpen(true)}
+        data-testid="quick-create-open"
+      >
         <Plus size={13} /> Add ticket
       </Button>
     );
@@ -134,7 +174,12 @@ function QuickCreate({ projectId, defaultStatus }: { projectId: string; defaultS
         data-testid="quick-create-input"
       />
       <div className="flex items-center gap-1.5">
-        <Button type="submit" size="sm" disabled={create.isPending || title.trim().length === 0} data-testid="quick-create-submit">
+        <Button
+          type="submit"
+          size="sm"
+          disabled={create.isPending || title.trim().length === 0}
+          data-testid="quick-create-submit"
+        >
           {create.isPending ? 'Adding…' : 'Add'}
         </Button>
         <Button
@@ -161,7 +206,7 @@ export function BoardPage() {
   const projects = useProjects();
   const project = useMemo(
     () => projects.data?.projects.find((p) => p.slug === slug),
-    [projects.data, slug]
+    [projects.data, slug],
   );
   const board = useBoard(project?.id);
   const move = useMoveTicket(project?.id ?? '');
@@ -193,14 +238,16 @@ export function BoardPage() {
   }, [board.data, blockedOnly]);
 
   const onDragStart = (e: DragStartEvent) => {
-    const ticketId = String(e.active.id);
+    const ticketId = ticketIdFromDndId(e.active.id);
+    if (!ticketId) return;
     const ticket = columns.flatMap((c) => c.tickets).find((t) => t.id === ticketId);
     setDragging(ticket ?? null);
   };
 
   const onDragEnd = async (e: DragEndEvent) => {
     setDragging(null);
-    const ticketId = String(e.active.id);
+    const ticketId = ticketIdFromDndId(e.active.id);
+    if (!ticketId) return;
     const overId = e.over?.id ? String(e.over.id) : null;
     if (!overId || !overId.startsWith('col:')) return;
     const targetStatus = overId.slice(4);
@@ -239,7 +286,11 @@ export function BoardPage() {
           </div>
         </div>
         {moveError ? (
-          <p className="ml-auto rounded bg-danger/10 px-2 py-1 text-xs text-danger" role="alert" data-testid="board-error">
+          <p
+            className="ml-auto rounded bg-danger/10 px-2 py-1 text-xs text-danger"
+            role="alert"
+            data-testid="board-error"
+          >
             {moveError}
           </p>
         ) : null}
@@ -259,7 +310,12 @@ export function BoardPage() {
         </label>
       </header>
 
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={onDragStart}
+        onDragCancel={() => setDragging(null)}
+        onDragEnd={onDragEnd}
+      >
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 scroll-slim">
           {columns.map((col) => (
             <Column
@@ -273,11 +329,15 @@ export function BoardPage() {
         </div>
         <DragOverlay dropAnimation={null}>
           {dragging ? (
-            <div className="w-56 rotate-1 opacity-90">
+            <div className="w-56 rotate-1 opacity-90" data-testid="drag-overlay">
               <div className="rounded-md border border-accent bg-surface p-2.5 shadow-xl">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-[10px] text-text-muted">{dragging.displayId}</span>
-                  <span className="ml-auto"><PriorityBadge priority={dragging.priority} /></span>
+                  <span className="font-mono text-[10px] text-text-muted">
+                    {dragging.displayId}
+                  </span>
+                  <span className="ml-auto">
+                    <PriorityBadge priority={dragging.priority} />
+                  </span>
                 </div>
                 <div className="mt-1.5 line-clamp-3 text-sm">{dragging.title}</div>
               </div>
@@ -292,7 +352,9 @@ export function BoardPage() {
             <QuickCreate projectId={project.id} />
           </div>
           <span className="text-[11px] text-text-muted">
-            Tip: press <kbd className="rounded border border-border px-1 font-mono text-[10px]">C</kbd> to add a ticket
+            Tip: press{' '}
+            <kbd className="rounded border border-border px-1 font-mono text-[10px]">C</kbd> to add
+            a ticket
           </span>
         </div>
       </div>
