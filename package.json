@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Self-hosted engineering ticket tracker — tickets.zakisu.com",
+  "description": "Self-hosted engineering ticket tracker \u2014 tickets.zakisu.com",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -12,11 +12,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "npm run build -w packages/shared && concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "npm run dev -w apps/api",
-    "dev:web": "npm run dev -w apps/web",
-    "start:api": "npm run start -w apps/api",
-    "build": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
+    "dev": "node init && npm run build -w packages/shared && concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node init && npm run dev -w apps/api",
+    "dev:web": "node init && npm run dev -w apps/web",
+    "start:api": "node init && npm run start -w apps/api",
+    "build": "node init && npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
