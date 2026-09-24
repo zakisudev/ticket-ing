@@ -153,19 +153,65 @@ export arrive in Phase 4.
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the Linux/cPanel walk-through.
 Do not deploy before the production checklist there is satisfied.
 
-### Docker / GitHub Packages
+### Run with Docker — no application dependencies required
 
-A multi-architecture image is published as
+The ready-to-run, multi-architecture image is distributed through GitHub
+Container Registry as
 [`ghcr.io/zakisudev/ticket-ing`](https://github.com/zakisudev/ticket-ing/pkgs/container/ticket-ing).
-The included Compose stack runs the app with a
-private MySQL 8.4 service, persistent database storage, automatic migrations,
-and health checks:
+You do **not** need to install Node.js, npm, TypeScript, MySQL, or any build tools.
+The only prerequisite is Docker with Docker Compose.
+
+Pull the application image directly with:
 
 ```bash
-cp compose.env.example compose.env
-# Replace both password placeholders in compose.env.
-docker compose --env-file compose.env up -d
+docker pull ghcr.io/zakisudev/ticket-ing:latest
 ```
 
-See **[docs/DOCKER.md](docs/DOCKER.md)** for HTTPS configuration, image tags,
-updates, backups, local builds, and the one-time GitHub package visibility step.
+The image needs a MySQL database, so the recommended complete setup is the
+included Compose stack below.
+
+Download or clone this repository, then prepare the Compose configuration:
+
+```bash
+git clone https://github.com/zakisudev/ticket-ing.git
+cd ticket-ing
+cp compose.env.example compose.env
+```
+
+Open `compose.env` and replace `MYSQL_PASSWORD` and `MYSQL_ROOT_PASSWORD` with
+two different, long, URL-safe passwords. Then pull and start the published
+containers:
+
+```bash
+docker compose --env-file compose.env pull
+docker compose --env-file compose.env up -d
+docker compose --env-file compose.env ps
+```
+
+Compose downloads the Zakisu Tickets image and MySQL 8.4, creates persistent
+database storage, waits for MySQL, applies all committed migrations, and starts
+the application. Open **http://localhost:4000/register** to create an account.
+
+Verify that the application and database are ready:
+
+```bash
+curl --fail http://localhost:4000/health/ready
+```
+
+Expected response:
+
+```json
+{"ok":true,"database":"up"}
+```
+
+To update later without deleting the database:
+
+```bash
+docker compose --env-file compose.env pull app
+docker compose --env-file compose.env up -d app
+```
+
+Application data remains in the `mysql_data` Docker volume. Do not run
+`docker compose down --volumes` unless you deliberately want to delete that
+database. See **[docs/DOCKER.md](docs/DOCKER.md)** for HTTPS configuration,
+image tags, backups, troubleshooting, and local image builds.
