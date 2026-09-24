@@ -64,9 +64,9 @@ export function LoginPage() {
         </Button>
       </form>
       <p className="mt-4 text-center text-xs text-text-muted">
-        First time?{' '}
+        Need an account?{' '}
         <Link to="/register" className="text-accent hover:underline">
-          Create the owner account
+          Register
         </Link>
       </p>
     </div>

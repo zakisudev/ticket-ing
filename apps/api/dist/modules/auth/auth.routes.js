@@ -11,12 +11,16 @@ import { createSession, clearSessionCookie, requireAuth, toUserDto } from './ses
 import { hashPassword, verifyPassword } from './passwords.js';
 export const authRouter = Router();
 const failedLogins = new Map();
+const registrationAttempts = new Map();
 let nowFn = Date.now;
 export function __setNowForTests(fn) {
     nowFn = fn;
 }
 export function __resetLoginRateLimiterForTests() {
     failedLogins.clear();
+}
+export function __resetRegistrationRateLimiterForTests() {
+    registrationAttempts.clear();
 }
 function clientIp(req) {
     return req.ip ?? req.socket?.remoteAddress ?? 'unknown';
@@ -44,6 +48,22 @@ function recordLoginFailure(req, email) {
 }
 function clearLoginFailures(req, email) {
     failedLogins.delete(rateLimitKey(req, email));
+}
+function consumeRegistrationAttempt(req) {
+    const key = clientIp(req);
+    const now = nowFn();
+    const attempt = registrationAttempts.get(key);
+    if (!attempt || attempt.resetAt <= now) {
+        registrationAttempts.set(key, {
+            count: 1,
+            resetAt: now + getConfig().REGISTRATION_RATE_WINDOW_MS,
+        });
+        return;
+    }
+    if (attempt.count >= getConfig().REGISTRATION_RATE_MAX) {
+        throw ApiError.rateLimited('Too many registration attempts. Try again later.');
+    }
+    attempt.count += 1;
 }
 // Auth events are logged by category only — never emails, tokens, or passwords.
 function logAuth(category) {
@@ -139,62 +159,37 @@ authRouter.post('/change-password', requireAuth, async (req, res, next) => {
     }
 });
 // ---------------------------------------------------------------------------
-// Registration — open ONLY while zero users exist.
-// Race protection: MySQL advisory lock GET_LOCK serializes concurrent first-user
-// creation; COUNT(*) is re-checked INSIDE the lock+transaction; users.email UNIQUE
-// is the database-level backstop. Two simultaneous requests => exactly one owner.
+// Registration — open by default so each user can create an isolated workspace.
+// Operators can close it with REGISTRATION_MODE=closed. Per-IP rate limiting
+// protects the expensive Argon2 path; users.email UNIQUE handles duplicate races.
 // ---------------------------------------------------------------------------
-const REGISTRATION_LOCK = 'zakisu:tickets:registration';
-authRouter.get('/registration-status', async (_req, res, next) => {
-    try {
-        const [rows] = await getPool().query('SELECT COUNT(*) AS count FROM users');
-        const open = Number(rows[0]?.count ?? 0) === 0;
-        const body = { open };
-        res.json(body);
-    }
-    catch (err) {
-        next(err);
-    }
+authRouter.get('/registration-status', (_req, res) => {
+    const body = { open: getConfig().REGISTRATION_MODE === 'open' };
+    res.json(body);
 });
 authRouter.post('/register', async (req, res, next) => {
     try {
+        if (getConfig().REGISTRATION_MODE !== 'open') {
+            throw ApiError.conflict('Registration is closed');
+        }
         const parsed = registerSchema.safeParse(req.body);
         if (!parsed.success) {
             throw ApiError.validation('Invalid registration payload', parsed.error.flatten());
         }
         const { email, password, name } = parsed.data;
-        const conn = await getPool().getConnection();
-        let userId = '';
+        consumeRegistrationAttempt(req);
+        const passwordHash = await hashPassword(password);
+        const userId = newId();
         try {
-            await conn.beginTransaction();
-            const [lockRows] = await conn.query('SELECT GET_LOCK(?, 5) AS lockAcquired', [REGISTRATION_LOCK]);
-            if (Number(lockRows[0].lockAcquired) !== 1) {
-                throw ApiError.conflict('Registration is busy; retry momentarily');
-            }
-            const [countRows] = await conn.query('SELECT COUNT(*) AS count FROM users');
-            if (Number(countRows[0].count) > 0) {
-                throw ApiError.conflict('Registration is closed');
-            }
-            const passwordHash = await hashPassword(password);
-            userId = newId();
-            await conn.execute('INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)', [
-                userId,
-                email,
-                passwordHash,
-                name ?? null,
-            ]);
-            await conn.query('SELECT RELEASE_LOCK(?)', [REGISTRATION_LOCK]);
-            await conn.commit();
+            await getPool().execute('INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)', [userId, email, passwordHash, name ?? null]);
         }
         catch (err) {
-            await conn.query('SELECT RELEASE_LOCK(?)', [REGISTRATION_LOCK]);
-            await conn.rollback();
+            if (err.code === 'ER_DUP_ENTRY') {
+                throw ApiError.conflict('An account with this email already exists');
+            }
             throw err;
         }
-        finally {
-            conn.release();
-        }
-        // The first owner is authenticated immediately after registration.
+        // Every new account is authenticated immediately after registration.
         await createSession(userId, res);
         logAuth('auth.register.success');
         res

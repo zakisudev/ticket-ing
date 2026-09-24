@@ -85,9 +85,10 @@ CORS_ORIGIN=http://localhost:5173
 
 ### First run
 
-Registration is open **only while zero users exist**. Open `/register` in the web
-app and create the owner account — it closes permanently afterwards. There is no
-seeded or default password anywhere.
+Open `/register` in the web app and create an account. Registration remains open
+for additional users, and each account gets a private owner-scoped workspace.
+Set `REGISTRATION_MODE=closed` to disable new signups. There is no seeded or
+default password anywhere.
 
 ## Scripts
 
@@ -119,6 +120,8 @@ is verified against actual MySQL, not mocks. See `apps/api/vitest.config.ts`.
 | `LOG_LEVEL` | `debug` `info` `warn` `error` `silent` |
 | `WEB_DIST` | Optional override for the built SPA directory |
 | `LOGIN_RATE_MAX` / `LOGIN_RATE_WINDOW_MS` | Login rate limiting |
+| `REGISTRATION_MODE` | `open` (default) or `closed` for new signups |
+| `REGISTRATION_RATE_MAX` / `REGISTRATION_RATE_WINDOW_MS` | Per-IP registration rate limiting |
 | `SESSION_TTL_DAYS` | Session lifetime (default 30) |
 
 Never commit real credentials — `.env` files are gitignored; `.env.example` holds
@@ -128,9 +131,9 @@ placeholders only.
 
 - argon2id password hashing (19 MiB / 3 passes); opaque session tokens, only
   SHA-256 hashes stored; HttpOnly + SameSite=Lax + Secure(in production) cookies.
-- Registration gate: zero users → open; otherwise closed. Concurrent first-user
-  creation is serialized by a MySQL advisory lock re-checked inside the
-  transaction; `users.email` UNIQUE is the backstop.
+- Registration is open by default, can be disabled by configuration, and is
+  rate-limited per IP. Each user owns an isolated workspace; `users.email`
+  uniqueness is the duplicate/race backstop.
 - Generic login failure message; per-IP+email rate limiting (429 RATE_LIMITED).
 - Helmet + strict CSP, pinned CORS, Origin validation on state-changing requests.
 - Zod validation on every route; Drizzle parameterized queries throughout.

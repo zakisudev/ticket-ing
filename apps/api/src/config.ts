@@ -29,6 +29,13 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(15 * 60 * 1000),
+  REGISTRATION_MODE: z.enum(['open', 'closed']).default('open'),
+  REGISTRATION_RATE_MAX: z.coerce.number().int().positive().default(5),
+  REGISTRATION_RATE_WINDOW_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60 * 1000),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
 });
 

@@ -8,7 +8,12 @@ export const passwordSchema = z.string().min(10).max(200);
 export const registerSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
-  name: z.string().trim().min(1).max(100).optional(),
+  name: z
+    .string()
+    .trim()
+    .max(100)
+    .transform((value) => value || undefined)
+    .optional(),
 });
 export type RegisterInput = z.infer<typeof registerSchema>;
 
@@ -33,7 +38,7 @@ export interface UserDto {
 }
 
 export interface RegistrationStatusDto {
-  /** true only while zero users exist (or an explicit override is set server-side). */
+  /** Whether the server currently accepts new account registrations. */
   open: boolean;
 }
 

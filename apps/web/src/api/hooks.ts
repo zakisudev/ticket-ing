@@ -12,6 +12,7 @@ import type {
   FocusDto,
   ProjectDto,
   ProjectDashboardDto,
+  RegistrationStatusDto,
   TagDto,
   TicketDetailDto,
   TicketDto,
@@ -53,7 +54,7 @@ function invalidateTicketViews(qc: QueryClient, projectId: string): void {
 export function useRegistrationStatus() {
   return useQuery({
     queryKey: queryKeys.registrationStatus,
-    queryFn: () => api.get<{ open: boolean }>('/api/auth/registration-status'),
+    queryFn: () => api.get<RegistrationStatusDto>('/api/auth/registration-status'),
     staleTime: 30_000,
   });
 }

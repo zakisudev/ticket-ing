@@ -13,6 +13,9 @@ export default defineConfig({
         'mysql://zakisu_app:zakisu_dev_pw@127.0.0.1:3308/zakisu_tickets_test',
       APP_URL: 'http://localhost:5173',
       LOG_LEVEL: 'silent',
+      // Individual suites create many isolated users from the same loopback IP.
+      // The dedicated auth test lowers this value to exercise the production limiter.
+      REGISTRATION_RATE_MAX: '1000',
     },
     include: ['src/tests/**/*.test.ts'],
   },

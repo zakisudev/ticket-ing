@@ -5,7 +5,7 @@ export declare const passwordSchema: z.ZodString;
 export declare const registerSchema: z.ZodObject<{
     email: z.ZodPipe<z.ZodString, z.ZodEmail>;
     password: z.ZodString;
-    name: z.ZodOptional<z.ZodString>;
+    name: z.ZodOptional<z.ZodPipe<z.ZodString, z.ZodTransform<string | undefined, string>>>;
 }, z.core.$strip>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export declare const loginSchema: z.ZodObject<{
@@ -26,7 +26,7 @@ export interface UserDto {
     createdAt: string;
 }
 export interface RegistrationStatusDto {
-    /** true only while zero users exist (or an explicit override is set server-side). */
+    /** Whether the server currently accepts new account registrations. */
     open: boolean;
 }
 /** HTTP-only cookie holding the opaque session token. */

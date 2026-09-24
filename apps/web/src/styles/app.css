@@ -31,6 +31,20 @@
 }
 
 @theme inline {
+  /* Keep typography readable without scaling spacing or layout dimensions. */
+  --text-xs: 0.975rem;
+  --text-sm: 1.1375rem;
+  --text-base: 1.3rem;
+  --text-lg: 1.4625rem;
+  --text-xl: 1.625rem;
+  --text-2xl: 1.95rem;
+  --text-3xl: 2.4375rem;
+  --text-4xl: 2.925rem;
+  --text-5xl: 3.9rem;
+  --text-6xl: 4.875rem;
+  --text-7xl: 5.85rem;
+  --text-8xl: 7.8rem;
+  --text-9xl: 10.4rem;
   --color-bg: var(--color-bg);
   --color-surface: var(--color-surface);
   --color-surface-2: var(--color-surface-2);
@@ -54,7 +68,7 @@ body {
   background-color: var(--color-bg);
   color: var(--color-text);
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
+  font-size: 18.2px;
   -webkit-font-smoothing: antialiased;
 }
 

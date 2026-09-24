@@ -79,9 +79,9 @@ so browser, Passenger, and LiteSpeed caches cannot retain authentication or
 database state. Fingerprinted `/assets/*` files retain long-lived caching, while
 the SPA `index.html` uses `no-cache` so deployments are discovered promptly.
 
-For a new empty database, open `/register` immediately and create the first owner.
-Registration closes automatically after that account exists; then sign out and
-back in once to verify the complete authentication flow.
+Open `/register` and create an account, then sign out and back in once to verify
+the complete authentication flow. Registration remains open for additional users
+by default; set `REGISTRATION_MODE=closed` when new signups should be disabled.
 
 ## 6. Release checklist (every deploy)
 

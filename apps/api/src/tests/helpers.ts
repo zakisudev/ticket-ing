@@ -45,7 +45,7 @@ export interface TestOwner {
   agent: ReturnType<typeof authed>;
 }
 
-/** Registers the first owner through the public API and returns an authenticated agent. */
+/** Registers a user through the public API and returns an authenticated agent. */
 export async function registerOwner(
   app: Express,
   email = 'owner@zakisu.test',
@@ -78,10 +78,7 @@ export function agentFromResponse(
 
 export { request };
 
-/**
- * Inserts a second user directly (public registration is closed after the first
- * owner) to prove foreign resources are 404 and not merely unauthorized.
- */
+/** Inserts an isolated user/session directly for focused authorization tests. */
 export async function createForeignOwner(
   email = 'foreigner@zakisu.test',
 ): Promise<{ id: string; cookie: string }> {

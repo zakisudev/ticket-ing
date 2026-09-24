@@ -1,4 +1,4 @@
-import { useContext, useEffect } from 'react';
+import { useContext } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -26,13 +26,6 @@ export function RegisterPage() {
     defaultValues: { email: '', password: '' },
   });
 
-  // Auto-redirect when registration is closed (owner already exists).
-  useEffect(() => {
-    if (status.data && !status.data.open) {
-      navigate('/login', { replace: true });
-    }
-  }, [status.data, navigate]);
-
   if (!isLoading && user) {
     return <Navigate to="/" replace />;
   }
@@ -44,22 +37,28 @@ export function RegisterPage() {
       <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 text-center text-sm">
         Registration is closed.
         <div className="mt-3">
-          <Link to="/login" className="text-accent hover:underline">Sign in</Link>
+          <Link to="/login" className="text-accent hover:underline">
+            Sign in
+          </Link>
         </div>
       </div>
     );
   }
 
   const onSubmit = handleSubmit(async (values) => {
-    await register.mutateAsync(values);
-    navigate('/', { replace: true });
+    try {
+      await register.mutateAsync(values);
+      navigate('/', { replace: true });
+    } catch {
+      // Error surfaced via register.isError below.
+    }
   });
 
   return (
     <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6">
-      <h1 className="text-sm font-semibold">Create the owner account</h1>
+      <h1 className="text-sm font-semibold">Create your account</h1>
       <p className="mt-1 text-xs text-text-muted">
-        Only one owner account exists. Registration closes permanently after this.
+        Your projects and tickets stay private to your account.
       </p>
       <form onSubmit={onSubmit} className="mt-4 space-y-3" noValidate>
         <div>
@@ -83,7 +82,7 @@ export function RegisterPage() {
           </p>
         ) : null}
         <Button type="submit" className="w-full" disabled={isSubmitting || register.isPending} data-testid="register-submit">
-          {register.isPending ? 'Creating…' : 'Create owner account'}
+          {register.isPending ? 'Creating…' : 'Create account'}
         </Button>
       </form>
       <p className="mt-4 text-center text-xs text-text-muted">
