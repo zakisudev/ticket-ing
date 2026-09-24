@@ -1,0 +1,52 @@
+services:
+  database:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zakisu_tickets}
+      MYSQL_USER: ${MYSQL_USER:-zakisu}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in compose.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in compose.env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    image: ${ZAKISU_IMAGE:-ghcr.io/zakisudev/ticket-ing:latest}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: mysql://${MYSQL_USER:-zakisu}:${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in compose.env}@database:3306/${MYSQL_DATABASE:-zakisu_tickets}
+      APP_URL: ${APP_URL:-http://localhost:4000}
+      CORS_ORIGIN: ${APP_URL:-http://localhost:4000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-open}
+      LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-10}
+      LOGIN_RATE_WINDOW_MS: ${LOGIN_RATE_WINDOW_MS:-900000}
+      REGISTRATION_RATE_MAX: ${REGISTRATION_RATE_MAX:-5}
+      REGISTRATION_RATE_WINDOW_MS: ${REGISTRATION_RATE_WINDOW_MS:-3600000}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
+    ports:
+      - '${APP_PORT:-4000}:4000'
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mysql_data:

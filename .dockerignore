@@ -1,0 +1,28 @@
+.git
+.github
+.freebuff
+.idea
+.vscode
+
+node_modules
+**/node_modules
+coverage
+playwright-report
+test-results
+*.log
+
+# Never copy local credentials into an image build context.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build output is produced inside the builder stage.
+apps/api/dist
+apps/web/dist
+packages/shared/dist
+
+docs
+tmp
+

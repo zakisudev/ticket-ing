@@ -152,3 +152,20 @@ export arrive in Phase 4.
 
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the Linux/cPanel walk-through.
 Do not deploy before the production checklist there is satisfied.
+
+### Docker / GitHub Packages
+
+A multi-architecture image is published as
+[`ghcr.io/zakisudev/ticket-ing`](https://github.com/zakisudev/ticket-ing/pkgs/container/ticket-ing).
+The included Compose stack runs the app with a
+private MySQL 8.4 service, persistent database storage, automatic migrations,
+and health checks:
+
+```bash
+cp compose.env.example compose.env
+# Replace both password placeholders in compose.env.
+docker compose --env-file compose.env up -d
+```
+
+See **[docs/DOCKER.md](docs/DOCKER.md)** for HTTPS configuration, image tags,
+updates, backups, local builds, and the one-time GitHub package visibility step.
